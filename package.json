@@ -1,0 +1,41 @@
+{
+  "name": "tesla-dashcam",
+  "version": "1.0.0",
+  "main": "dist-electron/main/index.js",
+  "description": "Tesla dashcam footage viewer and export desktop application.",
+  "author": "autumn <16638808906@163.com>",
+  "license": "MIT",
+  "private": true,
+  "keywords": [
+    "electron",
+    "tesla",
+    "dashcam",
+    "vite",
+    "vue"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run typecheck && vite build && electron-builder",
+    "build:test": "npm run typecheck && vite build --mode test && electron-builder",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.6",
+    "electron": "^41.2.1",
+    "electron-builder": "^26.8.1",
+    "pinia": "^3.0.4",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.8",
+    "vite-plugin-electron": "^0.29.1",
+    "vue": "^3.5.32",
+    "vue-i18n": "^11.3.2",
+    "vue-tsc": "^3.2.6"
+  },
+  "dependencies": {
+    "electron-log": "^5.4.3",
+    "element-plus": "^2.14.5",
+    "ffmpeg-static": "^5.3.0",
+    "lucide-vue-next": "^0.577.0"
+  }
+}

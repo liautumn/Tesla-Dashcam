@@ -1,0 +1,63 @@
+const zh = {
+    app: {
+        title: '行车记录仪查看器',
+        switchLanguage: 'Switch to English',
+    },
+    sidebar: {
+        search: '搜索日期、地点、原因',
+        all: '全部',
+        recent: '最近',
+        sentry: '哨兵',
+        saved: '已保存',
+        selectFolder: '选择 TeslaCam 文件夹',
+        noResults: '没有找到相关片段',
+        clipCount: '{total} 个片段 · {shown} 个显示',
+        unknownLocation: '未知位置',
+    },
+    clipType: {
+        manual: '手动',
+        aeb: 'AEB',
+        sentry: '哨兵',
+        saved: '已保存',
+        recent: '最近',
+    },
+    home: {
+        loadingTimeline: '正在读取视频时间线',
+        loadFailed: '无法载入 TeslaCam',
+        retry: '重新选择',
+        selectFolder: '选择一个 TeslaCam 文件夹',
+        supportedFolders: '支持 RecentClips、SavedClips、SentryClips，也可以直接拖入目录',
+        chooseFolder: '选择文件夹',
+        lastOpened: '上次打开：{folder}',
+        dropToLoad: '松开以载入 TeslaCam',
+        noVideos: '没有找到符合 Tesla 命名规则的 MP4 文件',
+    },
+    viewer: {
+        summary: '{files} 个文件 · {segments} 个片段',
+        previousClip: '上一个片段',
+        nextClip: '下一个片段',
+        play: '播放',
+        pause: '暂停',
+        restart: '从头播放',
+        mute: '静音',
+        unmute: '取消静音',
+        pictureInPicture: '前视画中画',
+        timeline: '播放进度',
+        playbackSpeed: '播放速度',
+    },
+    layout: {
+        grid6: '六宫格',
+        grid4: '四宫格',
+        front: '前视',
+    },
+    camera: {
+        front: '前视',
+        back: '后视',
+        left: '左侧',
+        right: '右侧',
+        left_pillar: '左柱',
+        right_pillar: '右柱',
+    },
+} as const
+
+export default zh

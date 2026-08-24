@@ -1,0 +1,45 @@
+:root {
+    color-scheme: dark;
+    --bg-color: #0b0c0c;
+    --text-color: #e5e8e8;
+    --app-header: #0c0d0d;
+    --app-surface: #111313;
+    --app-border: #292c2c;
+    --app-text-secondary: #858b8b;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+    margin: 0;
+    min-height: 100%;
+}
+
+body {
+    background: var(--bg-color);
+    color: var(--text-color);
+    font-family: var(--el-font-family);
+    overflow: hidden;
+}
+
+button,
+input,
+select {
+    font: inherit;
+}
+
+::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #3b3f3f;
+    background-clip: content-box;
+    border: 2px solid transparent;
+    border-radius: 4px;
+}

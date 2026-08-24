@@ -1,0 +1,55 @@
+// @see https://www.electron.build/configuration/configuration
+{
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  "appId": "com.autumn.tesladashcam",
+  "asar": true,
+  "productName": "Tesla Dashcam",
+  "directories": {
+    "output": "release/${version}"
+  },
+  "files": [
+    "dist",
+    "dist-electron",
+    "node_modules/ffmpeg-static/**/*",
+    "!node_modules/@rolldown/**/*"
+  ],
+  "asarUnpack": [
+    "node_modules/ffmpeg-static/**/*"
+  ],
+  "mac": {
+    "icon": "public/icons/mac/icon.icns",
+    "entitlements": "electron/resources/entitlements.mac.plist",
+    "entitlementsInherit": "electron/resources/entitlements.mac.plist",
+    "target": [
+      "dmg"
+    ],
+    "artifactName": "${productName}-Mac-${version}-Installer.${ext}"
+  },
+  "win": {
+    "icon": "public/icons/win/icon.ico",
+    "target": [
+      {
+        "target": "nsis",
+        "arch": [
+          "x64"
+        ]
+      }
+    ],
+    "artifactName": "${productName}-Windows-${version}-Setup.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "deleteAppDataOnUninstall": false
+  },
+  "linux": {
+    "icon": "public/icons/png",
+    "target": [
+      "AppImage",
+      "deb",
+//      "rpm"
+    ],
+    "artifactName": "${productName}-Linux-${version}.${ext}"
+  }
+}

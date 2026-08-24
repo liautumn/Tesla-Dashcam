@@ -1,0 +1,63 @@
+const en = {
+    app: {
+        title: 'Dashcam Viewer',
+        switchLanguage: '切换到中文',
+    },
+    sidebar: {
+        search: 'Search date, location, or reason',
+        all: 'All',
+        recent: 'Recent',
+        sentry: 'Sentry',
+        saved: 'Saved',
+        selectFolder: 'Select TeslaCam Folder',
+        noResults: 'No matching clips found',
+        clipCount: '{total} clips · {shown} shown',
+        unknownLocation: 'Unknown location',
+    },
+    clipType: {
+        manual: 'Manual',
+        aeb: 'AEB',
+        sentry: 'Sentry',
+        saved: 'Saved',
+        recent: 'Recent',
+    },
+    home: {
+        loadingTimeline: 'Reading video timeline',
+        loadFailed: 'Unable to load TeslaCam',
+        retry: 'Choose Again',
+        selectFolder: 'Select a TeslaCam folder',
+        supportedFolders: 'Supports RecentClips, SavedClips, and SentryClips, or drop a folder here',
+        chooseFolder: 'Select Folder',
+        lastOpened: 'Last opened: {folder}',
+        dropToLoad: 'Drop to load TeslaCam',
+        noVideos: 'No MP4 files matching Tesla naming rules were found',
+    },
+    viewer: {
+        summary: '{files} files · {segments} segments',
+        previousClip: 'Previous Clip',
+        nextClip: 'Next Clip',
+        play: 'Play',
+        pause: 'Pause',
+        restart: 'Restart',
+        mute: 'Mute',
+        unmute: 'Unmute',
+        pictureInPicture: 'Front Camera Picture in Picture',
+        timeline: 'Playback progress',
+        playbackSpeed: 'Playback speed',
+    },
+    layout: {
+        grid6: '6 Grid',
+        grid4: '4 Grid',
+        front: 'Front',
+    },
+    camera: {
+        front: 'Front',
+        back: 'Rear',
+        left: 'Left',
+        right: 'Right',
+        left_pillar: 'L-Pillar',
+        right_pillar: 'R-Pillar',
+    },
+} as const
+
+export default en
