@@ -13,7 +13,7 @@ import 'element-plus/theme-chalk/el-segmented.css'
 type FilterType = ClipType | 'all'
 
 const sidebarWidthKey = 'tesla-cam-sidebar-width'
-const minSidebarWidth = 240
+const minSidebarWidth = 300
 const maxSidebarWidth = 600
 
 const props = defineProps<{
@@ -34,7 +34,7 @@ const storedWidth = Number(localStorage.getItem(sidebarWidthKey))
 const sidebarWidth = ref(
     Number.isFinite(storedWidth) && storedWidth >= minSidebarWidth && storedWidth <= maxSidebarWidth
         ? storedWidth
-        : 280,
+        : minSidebarWidth,
 )
 const resizing = ref(false)
 
@@ -212,10 +212,10 @@ onUnmounted(() => {
   border-right: 1px solid #292c2c;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  min-width: 240px;
+  min-width: 300px;
   max-width: 600px;
   position: relative;
-  width: 280px;
+  width: 300px;
 }
 
 .sidebar__tools {

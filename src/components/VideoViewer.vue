@@ -428,8 +428,8 @@ const drawCurrentView = (context: CanvasRenderingContext2D, width: number, heigh
 }
 const exportScreenshot = async () => {
     try {
-        const api = window.electronAPI
-        if (!api) throw new Error(t('toast.desktopOnly'))
+        const files = window.files
+        if (!files) throw new Error(t('toast.desktopOnly'))
         const size = resolveCanvas()
         const canvas = document.createElement('canvas')
         canvas.width = size.width
@@ -439,9 +439,9 @@ const exportScreenshot = async () => {
         drawCurrentView(context, size.width, size.height, size.videoHeight)
         const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', .92))
         if (!blob) throw new Error('Image encoding failed')
-        const saved = await api.saveFile(`${props.clip.name}-${view.value}.jpg`, await blob.arrayBuffer())
+        const saved = await files.save(`${props.clip.name}-${view.value}.jpg`, await blob.arrayBuffer())
         if (saved) {
-            await api.showItemInFolder(saved)
+            await files.showItemInFolder(saved)
             ElMessage.success(t('toast.screenshotSaved'))
         }
     } catch (error) {
@@ -454,8 +454,8 @@ const exportCsv = async () => {
         return
     }
     try {
-        const api = window.electronAPI
-        if (!api) throw new Error(t('toast.desktopOnly'))
+        const files = window.files
+        if (!files) throw new Error(t('toast.desktopOnly'))
         const rows = seiSeries.value.map(point => [
             point.offsetSeconds.toFixed(3), point.seiVersion ?? '', point.frameSequence ?? '',
             point.autopilotState ?? '', point.speedKph.toFixed(2), point.gear,
@@ -467,9 +467,9 @@ const exportCsv = async () => {
             point.accelerationY.toFixed(4), point.accelerationZ.toFixed(4),
         ].join(','))
         const csv = `\ufeffoffset_s,sei_version,frame_sequence,autopilot_state_raw,speed_kph,gear,steering_deg,brake_pct,throttle_pct,ap_status,latitude,longitude,blinker_left,blinker_right,heading_deg,accel_x,accel_y,accel_z\n${rows.join('\n')}`
-        const saved = await api.saveFile(`${props.clip.name}-metadata.csv`, new TextEncoder().encode(csv).buffer)
+        const saved = await files.save(`${props.clip.name}-metadata.csv`, new TextEncoder().encode(csv).buffer)
         if (saved) {
-            await api.showItemInFolder(saved)
+            await files.showItemInFolder(saved)
             ElMessage.success(t('toast.csvExported'))
         }
     } catch (error) {
@@ -481,7 +481,7 @@ const buildComposeSegments = (start: number, duration: number) => {
     for (const file of props.clip.videos) {
         const parsed = parseTeslaVideoName(file.name)
         if (!parsed) continue
-        const sourcePath = window.electronAPI?.getPathForFile(file)
+        const sourcePath = window.files?.getPathForFile(file)
         if (!sourcePath) continue
         const paths = files.get(parsed.segmentName) ?? {}
         paths[parsed.camera] = sourcePath
@@ -560,7 +560,8 @@ const formatEta = (seconds: number) => seconds > 60
     : `${Math.round(Math.max(0, seconds))}s`
 
 const runFrameExport = async (start: number, requestedDuration: number, fileName: string) => {
-    const api = window.electronAPI!
+    const frameExport = window.frameExport
+    if (!frameExport) throw new Error(t('toast.desktopOnly'))
     const duration = Math.min(60, requestedDuration)
     if (requestedDuration > duration) ElMessage.warning(t('toast.fallbackLimit'))
     const fps = 30
@@ -581,7 +582,7 @@ const runFrameExport = async (start: number, requestedDuration: number, fileName
     await seekExportFrame(start)
     if (cancelRequested) return {ok: false, canceled: true}
 
-    const started = await api.exportStart({
+    const started = await frameExport.start({
         sessionId: activeExportSession,
         fileName,
         width: size.width,
@@ -590,19 +591,19 @@ const runFrameExport = async (start: number, requestedDuration: number, fileName
     })
     if (!started.ok) return started
     if (cancelRequested) {
-        api.exportCancel(activeExportSession)
+        frameExport.cancel(activeExportSession)
         return {ok: false, canceled: true}
     }
 
     for (let frame = 0; frame < totalFrames; frame += 1) {
         if (cancelRequested) {
-            api.exportCancel(activeExportSession)
+            frameExport.cancel(activeExportSession)
             return {ok: false, canceled: true}
         }
         if (frame > 0) await seekExportFrame(Math.min(props.footage.duration, start + frame / fps))
         drawCurrentView(context, size.width, size.height, size.videoHeight)
         const rgba = new Uint8Array(context.getImageData(0, 0, size.width, size.height).data)
-        const written = await api.exportFrame(activeExportSession, rgba)
+        const written = await frameExport.write(activeExportSession, rgba)
         if (!written.ok) throw new Error(written.error || 'Failed to write video frame')
 
         const completed = frame + 1
@@ -619,12 +620,14 @@ const runFrameExport = async (start: number, requestedDuration: number, fileName
 
     exportEncoding.value = true
     exportEta.value = ''
-    return api.exportFinish(activeExportSession)
+    return frameExport.finish(activeExportSession)
 }
 
 const exportVideo = async () => {
-    const api = window.electronAPI
-    if (!api) {
+    const files = window.files
+    const composeExport = window.composeExport
+    const frameExport = window.frameExport
+    if (!files || !composeExport || !frameExport) {
         ElMessage.error(t('toast.desktopOnly'))
         return
     }
@@ -648,11 +651,11 @@ const exportVideo = async () => {
     pauseVideos()
 
     try {
-        let result: Awaited<ReturnType<typeof api.exportCompose>> | undefined
+        let result: Awaited<ReturnType<typeof composeExport.start>> | undefined
         let composeError = ''
         let canCompose = true
         try {
-            canCompose = props.clip.videos.every(file => Boolean(api.getPathForFile(file)))
+            canCompose = props.clip.videos.every(file => Boolean(files.getPathForFile(file)))
         } catch {
             canCompose = false
         }
@@ -662,7 +665,7 @@ const exportVideo = async () => {
             exportStartedAt = performance.now()
             let unsubscribe: (() => void) | undefined
             try {
-                unsubscribe = api.onExportComposeProgress(event => {
+                unsubscribe = composeExport.onProgress(event => {
                     if (event.sessionId !== activeExportSession) return
                     exportProgress.value = event.progress
                     exportFrameCount.value = Math.round(event.outTimeSec * 30)
@@ -698,7 +701,7 @@ const exportVideo = async () => {
                     },
                     useHardware: exportOptions.value.hwAccel,
                 }
-                result = await api.exportCompose(request)
+                result = await composeExport.start(request)
             } catch (error) {
                 composeError = error instanceof Error ? error.message : String(error)
             } finally {
@@ -706,7 +709,7 @@ const exportVideo = async () => {
             }
             if (result?.canceled || cancelRequested) return
             if (result?.ok && result.filePath) {
-                await api.showItemInFolder(result.filePath)
+                await files.showItemInFolder(result.filePath)
                 ElMessage.success(t('toast.videoSaved'))
                 return
             }
@@ -715,14 +718,14 @@ const exportVideo = async () => {
 
         const fallback = await runFrameExport(start, duration, fileName)
         if (fallback.ok && fallback.filePath) {
-            await api.showItemInFolder(fallback.filePath)
+            await files.showItemInFolder(fallback.filePath)
             ElMessage.success(t('toast.videoSaved'))
         } else if (!fallback.canceled) {
             throw new Error(fallback.error || composeError || 'Unknown export error')
         }
     } catch (error) {
         if (!cancelRequested) ElMessage.error(t('toast.exportError', {error: error instanceof Error ? error.message : String(error)}))
-        if (activeExportSession) api.exportCancel(activeExportSession)
+        if (activeExportSession) frameExport.cancel(activeExportSession)
     } finally {
         exporting.value = false
         exportProgress.value = 0
@@ -734,9 +737,8 @@ const exportVideo = async () => {
 const cancelExport = () => {
     cancelRequested = true
     if (!activeExportSession) return
-    const api = window.electronAPI
-    api?.exportComposeCancel(activeExportSession)
-    api?.exportCancel(activeExportSession)
+    window.composeExport?.cancel(activeExportSession)
+    window.frameExport?.cancel(activeExportSession)
 }
 const requestDelete = async () => {
     if (!props.deleteClip || deleting.value || exporting.value) return

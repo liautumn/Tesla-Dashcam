@@ -27,6 +27,7 @@ const en = {
         loadingTimeline: 'Reading video timeline',
         loadFailed: 'Unable to load TeslaCam',
         retry: 'Choose Again',
+        selectClip: 'Select a clip',
         selectFolder: 'Select a TeslaCam folder',
         supportedFolders: 'Supports RecentClips, SavedClips, and SentryClips, or drop a folder here',
         chooseFolder: 'Select Folder',

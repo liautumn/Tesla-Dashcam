@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {computed, nextTick, onBeforeUnmount, ref, shallowRef, watch} from 'vue'
 import {ElButton, ElMessage} from 'element-plus'
-import {AlertCircle, FolderOpen, LoaderCircle, UploadCloud} from 'lucide-vue-next'
+import {AlertCircle, Film, FolderOpen, LoaderCircle, UploadCloud} from 'lucide-vue-next'
 import {useI18n} from 'vue-i18n'
 import ClipSidebar from '../components/ClipSidebar.vue'
 import VideoViewer from '../components/VideoViewer.vue'
@@ -82,8 +82,8 @@ const selectRelative = (offset: number) => {
 
 const deleteClip = async (clip: typeof selectedClip.value): Promise<TrashClipResult | undefined> => {
     if (!clip) return undefined
-    const api = window.electronAPI
-    if (!api) return {ok: false, code: 'source-paths-unavailable'}
+    const trash = window.trash
+    if (!trash) return {ok: false, code: 'source-paths-unavailable'}
 
     const index = clips.value.findIndex(item => item.id === clip.id)
     loadGeneration += 1
@@ -91,7 +91,7 @@ const deleteClip = async (clip: typeof selectedClip.value): Promise<TrashClipRes
     footage.value = undefined
     loadingFootage.value = false
 
-    const result = await api.trashClip(clip.videos, clip.name, String(locale.value))
+    const result = await trash.moveClip(clip.videos, clip.name, String(locale.value))
     if (result.ok) {
         clips.value = clips.value.filter(item => item.id !== clip.id)
         selectedClip.value = clips.value[Math.min(Math.max(index, 0), clips.value.length - 1)]
@@ -154,6 +154,11 @@ onBeforeUnmount(() => {
         <strong>{{ t('home.loadFailed') }}</strong>
         <span>{{ errorText }}</span>
         <ElButton @click="openFolder"><FolderOpen :size="17" />{{ t('home.retry') }}</ElButton>
+      </div>
+
+      <div v-else-if="clips.length" class="state">
+        <div class="state__mark"><Film :size="34" /></div>
+        <strong>{{ t('home.selectClip') }}</strong>
       </div>
 
       <div v-else class="state state--empty">

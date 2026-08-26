@@ -8,8 +8,11 @@ import {fileURLToPath} from 'node:url'
 import path from 'node:path'
 
 import log, {getLogDirectory, getLogFilePath} from './utils/logger'
-import {resolveFFmpegPath} from './utils/ffmpeg'
-import {cancelAllExports, registerIpcHandlers} from './ipc'
+import {resolveFFmpegPath} from './mod/ffmpeg'
+import {cancelComposeExports, registerComposeExport} from './mod/composeExport'
+import {registerFiles} from './mod/files'
+import {cancelFrameExports, registerFrameExport} from './mod/frameExport'
+import {registerTrash} from './mod/trash'
 
 if (!app.isPackaged) {
     app.commandLine.appendSwitch('remote-debugging-port', '9229')
@@ -59,7 +62,6 @@ try {
 } catch (error) {
     log.error('FFmpeg is unavailable; media export will be disabled', error)
 }
-registerIpcHandlers(ffmpegPath)
 
 // Windows 10+ 设置 AppUserModelId，保证通知和任务栏正常
 if (process.platform === 'win32') app.setAppUserModelId(app.getName())
@@ -118,6 +120,10 @@ async function createWindow() {
         },
     })
     win = window
+    registerFiles(window)
+    registerTrash(window)
+    registerComposeExport(window, ffmpegPath)
+    registerFrameExport(window, ffmpegPath)
     window.removeMenu()
     window.once('ready-to-show', () => {
         window.show()
@@ -183,7 +189,8 @@ app.whenReady()
 app.on('window-all-closed', () => {
     log.info('All windows closed')
     win = null
-    cancelAllExports()
+    cancelComposeExports()
+    cancelFrameExports()
     // macOS：关闭窗口不退出应用
     if (process.platform !== 'darwin') app.quit()
 })

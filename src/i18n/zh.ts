@@ -27,6 +27,7 @@ const zh = {
         loadingTimeline: '正在读取视频时间线',
         loadFailed: '无法载入 TeslaCam',
         retry: '重新选择',
+        selectClip: '请选择一个片段',
         selectFolder: '选择一个 TeslaCam 文件夹',
         supportedFolders: '支持 RecentClips、SavedClips、SentryClips，也可以直接拖入目录',
         chooseFolder: '选择文件夹',

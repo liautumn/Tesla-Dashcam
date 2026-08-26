@@ -1,5 +1,5 @@
 import type {CamClip, CamClipEvent, ClipType} from '../types/tesla'
-import {isTeslaCameraVideoName} from './teslaCamera'
+import {isTeslaCameraVideoName} from '../../shared/teslaCamera'
 
 const manualReasons = new Set([
     'user_interaction_dashcam_icon_tapped',

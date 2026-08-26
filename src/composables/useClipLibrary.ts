@@ -61,6 +61,8 @@ export const useClipLibrary = () => {
         if (generation !== loadGeneration) return
         scanning.value = true
         error.value = undefined
+        clips.value = []
+        selectedClip.value = undefined
         try {
             const result = await genClips(source)
             if (generation !== loadGeneration) return
@@ -69,7 +71,6 @@ export const useClipLibrary = () => {
                 return
             }
             clips.value = result
-            selectedClip.value = result[0]
             const firstFile = Array.from(source)[0]
             const resolvedName = folderName || firstFile?.webkitRelativePath.split('/')[0] || ''
             if (resolvedName) {

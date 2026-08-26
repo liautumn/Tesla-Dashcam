@@ -1,36 +1,12 @@
-import {contextBridge, ipcRenderer, webUtils} from 'electron'
-import type {
-    ComposeExportRequest,
-    ComposeProgressEvent,
-    ElectronApi,
-    FrameExportStartRequest,
-    TrashClipResult,
-} from '../../shared/types/index.js'
-import {resolveTrashPaths} from './resolveTrashPaths.js'
+import {registerComposeExportRenderer} from './mod/composeExport.ts'
+import {registerFilesRenderer} from './mod/files.ts'
+import {registerFrameExportRenderer} from './mod/frameExport.ts'
+import {registerTrashRenderer} from './mod/trash.ts'
 
-const electronApi: ElectronApi = {
-    saveFile: (name, buffer) => ipcRenderer.invoke('save-file', {name, buffer}),
-    showItemInFolder: filePath => ipcRenderer.invoke('show-item-in-folder', filePath),
-    getPathForFile: file => webUtils.getPathForFile(file),
-    trashClip: async (files, clipName, locale): Promise<TrashClipResult> => {
-        const paths = resolveTrashPaths(files, file => webUtils.getPathForFile(file))
-        if (!paths) return {ok: false, code: 'source-paths-unavailable'}
-        return ipcRenderer.invoke('trash-files', {paths, clipName, locale})
-    },
-    exportCompose: (request: ComposeExportRequest) => ipcRenderer.invoke('export-compose', request),
-    exportComposeCancel: sessionId => ipcRenderer.send('export-compose-cancel', {sessionId}),
-    onExportComposeProgress: (callback: (event: ComposeProgressEvent) => void) => {
-        const listener = (_event: Electron.IpcRendererEvent, data: ComposeProgressEvent) => callback(data)
-        ipcRenderer.on('export-compose-progress', listener)
-        return () => ipcRenderer.removeListener('export-compose-progress', listener)
-    },
-    exportStart: (request: FrameExportStartRequest) => ipcRenderer.invoke('export-start', request),
-    exportFrame: (sessionId, frameData) => ipcRenderer.invoke('export-frame', {sessionId, frameData}),
-    exportFinish: sessionId => ipcRenderer.invoke('export-finish', {sessionId}),
-    exportCancel: sessionId => ipcRenderer.send('export-cancel', {sessionId}),
-}
-
-contextBridge.exposeInMainWorld('electronAPI', electronApi)
+registerFilesRenderer()
+registerTrashRenderer()
+registerComposeExportRenderer()
+registerFrameExportRenderer()
 
 // ------------------------------------------------------------------
 // DOM Ready 工具函数
