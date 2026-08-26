@@ -14,7 +14,8 @@
     "!node_modules/@rolldown/**/*"
   ],
   "asarUnpack": [
-    "node_modules/ffmpeg-static/**/*"
+    "node_modules/ffmpeg-static/**/*",
+    "dist/fonts/**/*"
   ],
   "mac": {
     "icon": "public/icons/mac/icon.icns",

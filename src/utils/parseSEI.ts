@@ -244,7 +244,7 @@ export function convertToDataPoints(
     0: 'OFF',
     1: 'FSD',
     2: 'AP',
-    3: 'STANDBY',
+    3: 'TACC',
   };
 
   let safeFps = fps > 1 && Number.isFinite(fps) ? fps : DEFAULT_SEI_FPS;

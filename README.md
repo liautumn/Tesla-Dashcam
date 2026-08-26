@@ -68,6 +68,6 @@ npm run build:test
 
 ## 桌面能力
 
-截图、CSV、MP4 合成和移到系统废纸篓依赖 Electron 的原生文件能力。视频导出使用 `ffmpeg-static`，优先探测平台硬件 H.264 编码器，失败时回退到 `libx264`；安装包会将 FFmpeg 解包为可执行文件。
+截图、CSV、MP4 合成和移到系统废纸篓依赖 Electron 的原生文件能力。视频导出使用 `ffmpeg-static`，优先探测平台硬件 H.264 编码器，失败时回退到 `libx264`；安装包会将 FFmpeg 解包为可执行文件。中文叠加统一使用随包携带的 Noto Sans CJK SC（SIL OFL 1.1），不依赖 macOS、Windows 或 Linux 的系统字体。
 
 渲染进程关闭了 `nodeIntegration` 并启用了 `contextIsolation`。仅渲染进程使用的类型放在 `src/types`；后续需要跨主进程、预加载脚本和渲染进程共享的契约应放在 `shared/types`。

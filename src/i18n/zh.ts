@@ -86,7 +86,7 @@ const zh = {
         exportLocation: '叠加位置',
         exportDriveData: '叠加驾驶数据',
         exportHwAccel: '使用硬件加速编码',
-        exportVideoWidth: '视频导出分辨率',
+        exportVideoWidth: '视频导出最大宽度',
     },
     export: {
         title: '正在导出片段',
@@ -128,6 +128,7 @@ const zh = {
         filesChanged: '片段文件已发生变化，请重新选择 TeslaCam 文件夹',
         trashUnavailable: '系统废纸篓当前不可用，未删除任何文件',
         videoSaved: '视频片段已保存',
+        videoSavedDetails: '视频片段已保存（{encoder}，{width} × {height}）',
         exportError: '视频导出失败：{error}',
         fallbackLimit: '已切换到兼容导出，单次最多导出 60 秒',
         deleteFailed: '无法将片段移到废纸篓',

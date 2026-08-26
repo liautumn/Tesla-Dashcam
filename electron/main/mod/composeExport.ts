@@ -130,7 +130,7 @@ const detectHardwareEncoder = (ffmpegPath: string) => {
             for (const encoder of candidates) {
                 const ok = await ffmpegCompletes(ffmpegPath, [
                     '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
-                    'color=c=black:s=320x240:d=.2:r=10', '-c:v', encoder, '-f', 'null', '-',
+                    'color=c=black:s=320x240:d=0.2:r=10', '-c:v', encoder, '-f', 'null', '-',
                 ])
                 if (ok) return encoder
             }

@@ -54,25 +54,42 @@ export type OverlayBarLayout = {
   barHeight: number;
 };
 
+export type OverlayBarContent = {
+  showTime: boolean;
+  showLocation: boolean;
+  showDriveData: boolean;
+};
+
 /**
- * Bottom-bar metrics for a given overlay scale. The height is *derived* from
- * the stacked contents (padding, brand line, gap, timestamp, padding) rather
- * than fixed, which is what keeps the text inside the bar at every size.
+ * Bottom-bar metrics for a given overlay scale. The height is derived from the
+ * enabled header, timestamp, and telemetry rows rather than fixed, which keeps
+ * every row outside the camera image and removes the bar when all are disabled.
  */
-export function resolveOverlayBarLayout(scale: number): OverlayBarLayout {
+export function resolveOverlayBarLayout(
+  scale: number,
+  content: OverlayBarContent = {showTime: true, showLocation: true, showDriveData: true},
+): OverlayBarLayout {
   const s = Number.isFinite(scale) && scale > 0 ? scale : 1;
   const padding = Math.max(4, Math.round(6 * s));
   const brandSize = Math.max(8, Math.round(9 * s));
   const titleSize = Math.max(15, Math.round(22 * s));
   const subSize = Math.max(10, Math.round(12 * s));
   const gap = Math.max(2, Math.round(3 * s));
+  const rows: number[] = [];
+  if (content.showTime || content.showLocation) {
+    rows.push(Math.max(content.showTime ? brandSize : 0, content.showLocation ? subSize : 0));
+  }
+  if (content.showTime) rows.push(titleSize);
+  if (content.showDriveData) rows.push(subSize);
   return {
     padding,
     brandSize,
     titleSize,
     subSize,
     gap,
-    barHeight: even(padding * 2 + brandSize + gap + titleSize),
+    barHeight: rows.length
+      ? even(padding * 2 + rows.reduce((sum, row) => sum + row, 0) + gap * (rows.length - 1))
+      : 0,
   };
 }
 
@@ -95,6 +112,8 @@ export function resolveExportCanvasSize(params: {
   sourceWidth: number;
   sourceHeight: number;
   maxWidth?: number;
+  includeOverlayBar?: boolean;
+  overlay?: OverlayBarContent;
 }): ExportCanvasSize {
   const maxWidth = params.maxWidth ?? EXPORT_MAX_WIDTH;
   const srcW = params.sourceWidth > 0 ? params.sourceWidth : 1280;
@@ -111,7 +130,9 @@ export function resolveExportCanvasSize(params: {
   videoHeight = even(videoHeight);
 
   const scale = width / OVERLAY_BASE_WIDTH;
-  const { barHeight } = resolveOverlayBarLayout(scale);
+  const barHeight = params.includeOverlayBar === false
+    ? 0
+    : resolveOverlayBarLayout(scale, params.overlay).barHeight;
 
   return {
     width,

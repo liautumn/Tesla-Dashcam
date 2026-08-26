@@ -21,9 +21,9 @@ const locales = [
     {label: 'English', value: 'en'},
 ]
 const widths = [
-    {label: '4K', value: 3840},
+    {label: '3840', value: 3840},
     {label: '2880', value: 2880},
-    {label: '1080p', value: 1920},
+    {label: '1920', value: 1920},
 ]
 </script>
 

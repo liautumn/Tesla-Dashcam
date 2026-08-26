@@ -35,7 +35,7 @@ const driverMode = computed(() => {
     switch (props.data?.apStatus) {
         case 'FSD': return {label: t('telemetry.modeFsd'), detail: 'FSD', tone: 'fsd'}
         case 'AP': return {label: t('telemetry.modeAutosteer'), detail: 'AP / EAP', tone: 'ap'}
-        case 'STANDBY': return {label: t('telemetry.modeTacc'), detail: 'TACC', tone: 'tacc'}
+        case 'TACC': return {label: t('telemetry.modeTacc'), detail: 'TACC', tone: 'tacc'}
         case 'OFF': return {label: t('telemetry.modeManual'), detail: 'OFF', tone: 'manual'}
         default: return {label: t('telemetry.modeUnknown'), detail: '--', tone: 'unknown'}
     }

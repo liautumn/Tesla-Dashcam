@@ -86,7 +86,7 @@ const en = {
         exportLocation: 'Show location',
         exportDriveData: 'Show driving data',
         exportHwAccel: 'Use hardware-accelerated encoding',
-        exportVideoWidth: 'Video export resolution',
+        exportVideoWidth: 'Maximum export width',
     },
     export: {
         title: 'Exporting Clip',
@@ -128,6 +128,7 @@ const en = {
         filesChanged: 'Clip files changed; choose the TeslaCam folder again',
         trashUnavailable: 'The system Recycle Bin is unavailable; no files were deleted',
         videoSaved: 'Video clip saved',
+        videoSavedDetails: 'Video clip saved ({encoder}, {width} × {height})',
         exportError: 'Video export failed: {error}',
         fallbackLimit: 'Compatibility export is limited to 60 seconds per export',
         deleteFailed: 'Unable to move the clip to the Recycle Bin',

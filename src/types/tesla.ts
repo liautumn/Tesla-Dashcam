@@ -50,7 +50,7 @@ export type SeekInfo = {
 }
 
 export type GearState = 'P' | 'R' | 'N' | 'D' | 'UNKNOWN'
-export type APStatus = 'OFF' | 'STANDBY' | 'AP' | 'FSD' | 'UNKNOWN'
+export type APStatus = 'OFF' | 'TACC' | 'AP' | 'FSD' | 'UNKNOWN'
 
 export type SEIDataPoint = {
     seiVersion: number | null

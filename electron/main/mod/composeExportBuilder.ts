@@ -106,7 +106,7 @@ function evenDown(n: number): number {
  * resolveOverlayBarLayout in the renderer: the bar is sized by its contents so
  * the text can never spill out of it.
  */
-function defaultBarLayout(width: number) {
+function defaultBarLayout(width: number, overlay: ComposeExportRequest['overlay']) {
   const s = width / 1280;
   const padding = Math.max(4, Math.round(6 * s));
   const brandSize = Math.max(8, Math.round(9 * s));
@@ -114,6 +114,15 @@ function defaultBarLayout(width: number) {
   const subSize = Math.max(10, Math.round(12 * s));
   const gap = Math.max(2, Math.round(3 * s));
   const hPad = Math.round(22 * s);
+  const showTime = overlay?.showTime !== false;
+  const showLocation = !!overlay?.showLocation;
+  const showDriveData = !!overlay?.showDriveData;
+  const rows: number[] = [];
+  if (showTime || showLocation) {
+    rows.push(Math.max(showTime ? brandSize : 0, showLocation ? subSize : 0));
+  }
+  if (showTime) rows.push(titleSize);
+  if (showDriveData) rows.push(subSize);
   return {
     scale: s,
     padding,
@@ -123,7 +132,9 @@ function defaultBarLayout(width: number) {
     gap,
     hPad,
     leftTextX: hPad,
-    barHeight: even(padding * 2 + brandSize + gap + titleSize),
+    barHeight: rows.length
+      ? even(padding * 2 + rows.reduce((sum, row) => sum + row, 0) + gap * (rows.length - 1))
+      : 0,
   };
 }
 
@@ -139,11 +150,52 @@ function escPathValue(p: string): string {
 }
 
 const CJK_RE = /[\u3000-\u9fff\uf900-\ufaff]/;
+const BUNDLED_FONT_NAME = 'NotoSansCJKsc-Regular.otf';
+let bundledFontCache: string | null | undefined;
+
+function resolveBundledFont(): string | undefined {
+  if (bundledFontCache !== undefined) return bundledFontCache ?? undefined;
+  const candidates = [
+    typeof process.resourcesPath === 'string'
+      ? path.join(
+          process.resourcesPath,
+          'app.asar.unpacked',
+          'dist',
+          'fonts',
+          BUNDLED_FONT_NAME,
+        )
+      : '',
+    typeof process.resourcesPath === 'string'
+      ? path.join(process.resourcesPath, 'fonts', BUNDLED_FONT_NAME)
+      : '',
+    path.resolve(process.cwd(), 'public', 'fonts', BUNDLED_FONT_NAME),
+    path.resolve(process.cwd(), 'dist', 'fonts', BUNDLED_FONT_NAME),
+  ];
+  bundledFontCache = candidates.find(candidate => {
+    if (!candidate) return false;
+    try {
+      const stat = fs.statSync(candidate);
+      return stat.isFile() && stat.size > 1_000_000;
+    } catch {
+      return false;
+    }
+  }) ?? null;
+  return bundledFontCache ?? undefined;
+}
 
 /** Resolve a system font so drawtext works with ffmpeg-static builds. */
 function resolveFontFile(needsCJK: boolean): string | undefined {
+  const bundled = resolveBundledFont();
+  if (bundled) return bundled;
   const win = needsCJK
-    ? ['C:\\Windows\\Fonts\\msyh.ttc', 'C:\\Windows\\Fonts\\arial.ttf']
+    ? [
+        'C:\\Windows\\Fonts\\msyh.ttc',
+        'C:\\Windows\\Fonts\\msyhbd.ttc',
+        'C:\\Windows\\Fonts\\simhei.ttf',
+        'C:\\Windows\\Fonts\\simsun.ttc',
+        'C:\\Windows\\Fonts\\Deng.ttf',
+        'C:\\Windows\\Fonts\\arial.ttf',
+      ]
     : [
         'C:\\Windows\\Fonts\\arial.ttf',
         'C:\\Windows\\Fonts\\segoeui.ttf',
@@ -152,17 +204,30 @@ function resolveFontFile(needsCJK: boolean): string | undefined {
   const mac = needsCJK
     ? [
         '/System/Library/Fonts/PingFang.ttc',
+        '/System/Library/Fonts/Hiragino Sans GB.ttc',
+        '/System/Library/Fonts/STHeiti Medium.ttc',
+        '/System/Library/Fonts/STHeiti Light.ttc',
+        '/System/Library/Fonts/Supplemental/Arial Unicode.ttf',
+        '/System/Library/Fonts/Supplemental/Songti.ttc',
         '/System/Library/Fonts/Supplemental/Arial.ttf',
       ]
     : [
         '/System/Library/Fonts/Supplemental/Arial.ttf',
         '/System/Library/Fonts/Helvetica.ttc',
       ];
-  const linux = [
-    '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
-    '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-    '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
-  ];
+  const linux = needsCJK
+    ? [
+        '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+        '/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf',
+        '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
+        '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
+        '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+      ]
+    : [
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+        '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
+      ];
   const candidates =
     process.platform === 'win32'
       ? win
@@ -343,7 +408,8 @@ export function prepareComposeExport(
   const legacy = layoutSize(req.viewType);
   const width = req.layout?.width ?? legacy.width;
   const videoHeight = req.layout?.videoHeight ?? legacy.videoHeight;
-  const bar = req.layout ?? defaultBarLayout(width);
+  const overlay = req.overlay || {};
+  const bar = req.layout ?? defaultBarLayout(width, overlay);
   const barHeight = bar.barHeight;
   const height = req.layout?.height ?? even(videoHeight + barHeight);
   const gridCellW = evenDown(width / (req.viewType === 'grid4' ? 2 : 3));
@@ -450,7 +516,6 @@ export function prepareComposeExport(
     filterParts.push(`${scaledPads[0]}copy[grid]`);
   }
 
-  const overlay = req.overlay || {};
   filterParts.push(`[grid]pad=${width}:${height}:0:0:black[base]`);
 
   let current = 'base';
@@ -466,14 +531,16 @@ export function prepareComposeExport(
   // ── Bottom info bar, matching the canvas overlay in Viewer.drawFrame ──
   const barY = videoHeight;
   const brandY = barY + bar.padding;
-  const titleY = brandY + bar.brandSize + bar.gap;
+  const titleY = brandY + Math.max(bar.brandSize, bar.subSize) + bar.gap;
 
-  chain(
-    `drawbox=x=0:y=${barY}:w=${width}:h=${barHeight}:color=0x111111@1:t=fill`,
-  );
-  chain(`drawbox=x=0:y=${barY}:w=${width}:h=1:color=white@0.1:t=fill`);
+  if (barHeight > 0) {
+    chain(
+      `drawbox=x=0:y=${barY}:w=${width}:h=${barHeight}:color=0x111111@1:t=fill`,
+    );
+    chain(`drawbox=x=0:y=${barY}:w=${width}:h=1:color=white@0.1:t=fill`);
+  }
 
-  if (overlay.showTime !== false) {
+  if (barHeight > 0 && overlay.showTime !== false) {
     if (overlay.brandText) {
       chain(
         drawtextFile(
@@ -517,10 +584,8 @@ export function prepareComposeExport(
     overlay.showDriveData && overlay.driveWindows?.length
   );
 
-  if (overlay.showLocation && overlay.locationText) {
-    // Location is centred when it owns the right side, and moves up when the
-    // drive readout also needs a row there.
-    const locY = hasDriveText
+  if (barHeight > 0 && overlay.showLocation && overlay.locationText) {
+    const locY = overlay.showTime !== false || hasDriveText
       ? barY + bar.padding
       : Math.round(barY + (barHeight - bar.subSize) / 2);
     const locStyle = `fontsize=${bar.subSize}:x=w-tw-${bar.hPad}:y=${locY}`;
@@ -547,7 +612,7 @@ export function prepareComposeExport(
     );
   }
 
-  if (overlay.showDriveData && overlay.driveWindows?.length) {
+  if (barHeight > 0 && overlay.showDriveData && overlay.driveWindows?.length) {
     // One drawtext per pre-sampled window, gated by enable=between(t,…).
     for (const w of overlay.driveWindows) {
       if (!w.text || !(w.end > w.start)) continue;

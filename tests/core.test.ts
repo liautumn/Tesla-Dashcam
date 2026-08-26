@@ -12,7 +12,11 @@ import {resolveTrashPaths} from '../electron/preload/mod/resolveTrashPaths.ts'
 import type {ComposeExportRequest} from '../shared/types/index.ts'
 import type {SEIDataPoint} from '../src/types/tesla.ts'
 import {detectHardBraking} from '../src/utils/detectIncidents.ts'
-import {resolveExportCanvasSize, selectSegmentsInRange} from '../src/utils/exportLayout.ts'
+import {
+    resolveExportCanvasSize,
+    resolveOverlayBarLayout,
+    selectSegmentsInRange,
+} from '../src/utils/exportLayout.ts'
 import {convertToDataPoints} from '../src/utils/parseSEI.ts'
 import {shareInflight} from '../src/utils/shareInflight.ts'
 import {normalizeAppSettings, normalizeExportSettings} from '../src/stores/settings.ts'
@@ -87,6 +91,8 @@ test('compose export preserves CJK location text', () => {
         assert.ok(textValues.includes(location))
         assert.ok(textValues.includes(`| ${location}`))
         assert.ok(!textValues.includes('Location unavailable'))
+        assert.ok(fs.statSync(path.resolve('public/fonts/NotoSansCJKsc-Regular.otf')).size > 1_000_000)
+        assert.match(graphOf(prepared), /NotoSansCJKsc-Regular\.otf/)
     } finally {
         if (prepared.tmpDir) fs.rmSync(prepared.tmpDir, {recursive: true, force: true})
     }
@@ -141,6 +147,61 @@ test('FFmpeg compose keeps the missing middle second black and the full duration
     }
 })
 
+test('FFmpeg compose renders bundled Chinese telemetry below the camera image', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesla-dashcam-cjk-render-'))
+    const source = path.join(root, 'source.mp4')
+    const output = path.join(root, 'out.mp4')
+    const generated = spawnSync(ffmpegStatic!, [
+        '-y', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
+        'color=c=blue:s=640x360:d=0.5:r=10', '-pix_fmt', 'yuv420p', source,
+    ], {encoding: 'utf8'})
+    assert.equal(generated.status, 0, generated.stderr)
+
+    const content = {showTime: true, showLocation: true, showDriveData: true}
+    const size = resolveExportCanvasSize({
+        viewType: 'front', sourceWidth: 640, sourceHeight: 360, overlay: content,
+    })
+    const bar = resolveOverlayBarLayout(size.scale, content)
+    const request: ComposeExportRequest = {
+        sessionId: 'cjk-render', fileName: 'out.mp4', viewType: 'front',
+        startSeconds: 0, durationSeconds: .5, fps: 10,
+        segments: [{name: 's0', startSeconds: 0, duration: .5, paths: {front: source}}],
+        layout: {...bar, ...size, hPad: 11, leftTextX: 11},
+        overlay: {
+            ...content,
+            brandText: 'TESLA DASHCAM',
+            locationText: '上海市浦东新区',
+            timeWindows: [{start: 0, end: .5, text: '2026/08/26 周三 12:34:56'}],
+            driveWindows: [{
+                start: 0,
+                end: .5,
+                text: '速度 72 km/h | 档位 D | 模式 TACC | 油门 38% | 刹车 100% | 转向灯 <',
+            }],
+        },
+    }
+    const prepared = prepareComposeExport(request, output)
+    try {
+        const graph = graphOf(prepared)
+        const textYValues = Array.from(graph.matchAll(/drawtext=[^;]*:y=(\d+)/g), match => Number(match[1]))
+        assert.ok(textYValues.length >= 4)
+        assert.ok(textYValues.every(y => y >= size.videoHeight), textYValues.join(','))
+        const encoded = spawnSync(ffmpegStatic!, prepared.args, {encoding: 'utf8'})
+        assert.equal(encoded.status, 0, encoded.stderr)
+        const bottom = spawnSync(ffmpegStatic!, [
+            '-hide_banner', '-loglevel', 'error', '-ss', '0.2', '-i', output,
+            '-frames:v', '1', '-vf',
+            `crop=${size.width}:${size.barHeight}:0:${size.videoHeight},signalstats,metadata=print:file=-`,
+            '-f', 'null', '-',
+        ], {encoding: 'utf8'})
+        assert.equal(bottom.status, 0, bottom.stderr)
+        const maxLuma = Number(bottom.stdout.match(/signalstats\.YMAX=(\d+)/)?.[1])
+        assert.ok(maxLuma > 100, `bottom-bar max luma was ${maxLuma}`)
+    } finally {
+        if (prepared.tmpDir) fs.rmSync(prepared.tmpDir, {recursive: true, force: true})
+        fs.rmSync(root, {recursive: true, force: true})
+    }
+})
+
 test('SEI conversion exposes every decoded identity and driving-mode field', () => {
     const points = convertToDataPoints([{
         version: 4,
@@ -170,6 +231,17 @@ test('SEI conversion exposes every decoded identity and driving-mode field', () 
     assert.equal(points[0].latitude, 31.2304)
     assert.equal(points[0].longitude, 121.4737)
     assert.equal(points[0].headingDeg, 92)
+})
+
+test('SEI conversion names Tesla autopilot state 3 as TACC', () => {
+    const statuses = convertToDataPoints([
+        {frameSeqNo: 0, autopilotState: 0},
+        {frameSeqNo: 1, autopilotState: 1},
+        {frameSeqNo: 2, autopilotState: 2},
+        {frameSeqNo: 3, autopilotState: 3},
+        {frameSeqNo: 4, autopilotState: 4},
+    ], 0).map(point => point.apStatus)
+    assert.deepEqual(statuses, ['OFF', 'FSD', 'AP', 'TACC', 'UNKNOWN'])
 })
 
 test('SEI conversion preserves missing GPS fields and derives heading from a real track', () => {
@@ -202,10 +274,14 @@ test('hard braking detection emits one incident mark', () => {
 
 test('export telemetry uses angle brackets for turn signals', () => {
     const sample = point(0, 21)
-    assert.equal(formatTelemetryOverlay(sample), '21 km/h  D  OFF')
-    assert.equal(formatTelemetryOverlay({...sample, blinkerLeft: true}), '21 km/h  D  OFF  <')
-    assert.equal(formatTelemetryOverlay({...sample, blinkerRight: true}), '21 km/h  D  OFF  >')
-    assert.equal(formatTelemetryOverlay({...sample, blinkerLeft: true, blinkerRight: true}), '21 km/h  D  OFF  <>')
+    assert.equal(formatTelemetryOverlay(sample), 'Speed 21 km/h | Gear D | Mode OFF | Throttle 0% | Brake 0% | Signals --')
+    assert.match(formatTelemetryOverlay({...sample, blinkerLeft: true}), /Signals <$/)
+    assert.match(formatTelemetryOverlay({...sample, blinkerRight: true}), /Signals >$/)
+    assert.match(formatTelemetryOverlay({...sample, blinkerLeft: true, blinkerRight: true}), /Signals <>$/)
+    assert.equal(
+        formatTelemetryOverlay({...sample, throttlePct: 38, brakePct: 100, apStatus: 'TACC'}, 'zh-CN'),
+        '速度 21 km/h | 档位 D | 模式 TACC | 油门 38% | 刹车 100% | 转向灯 --',
+    )
 })
 
 test('export canvas stays even and within the selected width', () => {
@@ -214,6 +290,18 @@ test('export canvas stays even and within the selected width', () => {
     assert.equal(size.width % 2, 0)
     assert.equal(size.height % 2, 0)
     assert.equal(size.height, size.videoHeight + size.barHeight)
+    assert.ok(size.barHeight > 0)
+    const clean = resolveExportCanvasSize({
+        viewType: 'front', sourceWidth: 1280, sourceHeight: 960, includeOverlayBar: false,
+    })
+    assert.equal(clean.barHeight, 0)
+    assert.equal(clean.height, clean.videoHeight)
+    const locationOnly = resolveExportCanvasSize({
+        viewType: 'front', sourceWidth: 1280, sourceHeight: 960,
+        overlay: {showTime: false, showLocation: true, showDriveData: false},
+    })
+    assert.ok(locationOnly.barHeight > 0)
+    assert.ok(locationOnly.barHeight < size.barHeight)
     assert.equal(selectSegmentsInRange([
         {startSeconds: 0, duration: 2}, {startSeconds: 2, duration: 2}, {startSeconds: 4, duration: 2},
     ], 1.5, 1).length, 2)

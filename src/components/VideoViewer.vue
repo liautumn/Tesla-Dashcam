@@ -57,6 +57,22 @@ const localeStore = useLocaleStore()
 const settingsStore = useSettingsStore()
 const {locale} = storeToRefs(localeStore)
 const {app: appSettings, exportOptions} = storeToRefs(settingsStore)
+const exportFontFamily = 'Tesla Export'
+let exportFontPromise: Promise<void> | undefined
+const ensureExportFont = () => {
+    if (!exportFontPromise) {
+        exportFontPromise = (async () => {
+            const url = new URL('./fonts/NotoSansCJKsc-Regular.otf', window.location.href).href
+            const face = new FontFace(exportFontFamily, `url("${url}")`)
+            await face.load()
+            document.fonts.add(face)
+        })().catch(error => {
+            exportFontPromise = undefined
+            throw error
+        })
+    }
+    return exportFontPromise
+}
 
 const rates = [0.25, 0.5, 1, 1.5, 2]
 const videoElements = shallowReactive(new Map<CamName, HTMLVideoElement>())
@@ -82,6 +98,11 @@ const timelineHover = ref<number>()
 const deleting = ref(false)
 const seiSeries = shallowRef(props.footage.seiData ?? [])
 const seiLoading = ref(false)
+const exportOverlayContent = computed(() => ({
+    showTime: exportOptions.value.showTime,
+    showLocation: exportOptions.value.showLocation,
+    showDriveData: exportOptions.value.showDriveData && seiSeries.value.length > 0,
+}))
 let loadSeiGeneration = 0
 let activeExportSession = ''
 let exportStartedAt = 0
@@ -143,20 +164,33 @@ const timeText = computed(() => currentDate.value
     ? new Intl.DateTimeFormat(locale.value, {hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false}).format(currentDate.value)
     : '--:--:--',
 )
-const exportWeekdays = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT']
+const exportWeekdays = {
+    'zh-CN': ['周日', '周一', '周二', '周三', '周四', '周五', '周六'],
+    en: ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'],
+}
 const padExportNumber = (value: number) => String(value).padStart(2, '0')
 const formatExportTimestamp = (date?: Date) => date
-    ? `${date.getFullYear()}/${padExportNumber(date.getMonth() + 1)}/${padExportNumber(date.getDate())} ${exportWeekdays[date.getDay()]} ${padExportNumber(date.getHours())}:${padExportNumber(date.getMinutes())}:${padExportNumber(date.getSeconds())}`
+    ? `${date.getFullYear()}/${padExportNumber(date.getMonth() + 1)}/${padExportNumber(date.getDate())} ${exportWeekdays[locale.value][date.getDay()]} ${padExportNumber(date.getHours())}:${padExportNumber(date.getMinutes())}:${padExportNumber(date.getSeconds())}`
     : `${props.clip.name.slice(0, 10)} --:--:--`
+const truncateExportText = (value: string, maxLength = 40) => {
+    const chars = Array.from(value)
+    return chars.length > maxLength ? `${chars.slice(0, maxLength - 3).join('')}...` : value
+}
 const resolveExportLocationText = (seconds: number) => {
     const label = [props.clip.event?.city, props.clip.event?.street].filter(Boolean).join(' ')
-    if (label) return label
+    if (label) return truncateExportText(label)
     const data = sampleTelemetry(seiSeries.value, seconds)
     if (data?.latitude !== null && data?.latitude !== undefined
         && data.longitude !== null && data.longitude !== undefined) {
         return `${data.latitude.toFixed(5)}, ${data.longitude.toFixed(5)}`
     }
-    return 'Location unavailable'
+    const eventLatitude = Number(props.clip.event?.est_lat)
+    const eventLongitude = Number(props.clip.event?.est_lon)
+    if (Number.isFinite(eventLatitude) && Number.isFinite(eventLongitude)
+        && (eventLatitude !== 0 || eventLongitude !== 0)) {
+        return `${eventLatitude.toFixed(5)}, ${eventLongitude.toFixed(5)}`
+    }
+    return locale.value === 'zh-CN' ? '位置不可用' : 'Location unavailable'
 }
 const exportSelectionSeconds = computed(() =>
     exportIn.value !== undefined && exportOut.value !== undefined && exportOut.value > exportIn.value
@@ -339,6 +373,10 @@ const resolveCanvas = (maxWidth = 3840) => {
         sourceWidth: source?.videoWidth || 1280,
         sourceHeight: source?.videoHeight || 720,
         maxWidth,
+        includeOverlayBar: exportOptions.value.showTime
+            || exportOptions.value.showLocation
+            || exportOptions.value.showDriveData,
+        overlay: exportOverlayContent.value,
     })
 }
 const drawCurrentView = (context: CanvasRenderingContext2D, width: number, height: number, videoHeight: number) => {
@@ -362,31 +400,9 @@ const drawCurrentView = (context: CanvasRenderingContext2D, width: number, heigh
         }
     }
     const scale = width / 1280
-    const bar = resolveOverlayBarLayout(scale)
+    const bar = resolveOverlayBarLayout(scale, exportOverlayContent.value)
     const y = videoHeight
-    if (exportOptions.value.showDriveData && currentTelemetry.value) {
-        const data = currentTelemetry.value
-        const topBarHeight = Math.round(50 * scale)
-        const pad = Math.round(24 * scale)
-        context.fillStyle = '#00000099'
-        context.fillRect(0, 0, width, topBarHeight)
-        context.textBaseline = 'middle'
-        context.font = `700 ${Math.max(16, Math.round(22 * scale))}px sans-serif`
-        context.fillStyle = data.gear === 'D' ? '#22c55e' : data.gear === 'R' ? '#ef4444' : '#a3a3a3'
-        context.fillText(data.gear, pad, topBarHeight / 2)
-        const speedText = `${Math.round(data.speedKph)}`
-        context.font = `700 ${Math.max(24, Math.round(36 * scale))}px sans-serif`
-        context.fillStyle = data.speedKph > 120 ? '#ef4444' : data.speedKph > 80 ? '#eab308' : '#22c55e'
-        const speedWidth = context.measureText(speedText).width
-        context.fillText(speedText, (width - speedWidth) / 2, topBarHeight / 2)
-        context.font = `500 ${Math.max(10, Math.round(12 * scale))}px sans-serif`
-        context.fillStyle = '#8a9090'
-        context.fillText('km/h', (width + speedWidth) / 2 + Math.round(10 * scale), topBarHeight / 2)
-        const modeText = data.apStatus === 'OFF' ? 'MANUAL' : data.apStatus
-        context.font = `600 ${Math.max(10, Math.round(12 * scale))}px sans-serif`
-        context.fillStyle = data.apStatus === 'FSD' ? '#a78bfa' : data.apStatus === 'AP' ? '#60a5fa' : '#a3a3a3'
-        context.fillText(modeText, width - pad - context.measureText(modeText).width, topBarHeight / 2)
-    }
+    if (height <= videoHeight) return
     const gradient = context.createLinearGradient(0, y, 0, height)
     gradient.addColorStop(0, '#111111')
     gradient.addColorStop(1, '#090909')
@@ -399,28 +415,35 @@ const drawCurrentView = (context: CanvasRenderingContext2D, width: number, heigh
     const leftTextX = hPad
     if (exportOptions.value.showTime) {
         context.fillStyle = '#fb7185'
-        context.font = `${bar.brandSize}px sans-serif`
+        context.font = `${bar.brandSize}px "${exportFontFamily}", sans-serif`
         context.fillText('TESLA DASHCAM', leftTextX, y + bar.padding)
         context.fillStyle = '#fafafa'
-        context.font = `600 ${bar.titleSize}px sans-serif`
-        context.fillText(formatExportTimestamp(currentDate.value), leftTextX, y + bar.padding + bar.brandSize + bar.gap)
+        context.font = `600 ${bar.titleSize}px "${exportFontFamily}", sans-serif`
+        context.fillText(
+            formatExportTimestamp(currentDate.value),
+            leftTextX,
+            y + bar.padding + Math.max(bar.brandSize, bar.subSize) + bar.gap,
+        )
     }
     const right: string[] = []
     if (exportOptions.value.showDriveData && currentTelemetry.value) {
-        right.push(formatTelemetryOverlay(currentTelemetry.value))
+        right.push(formatTelemetryOverlay(currentTelemetry.value, locale.value))
     }
     if (exportOptions.value.showLocation) {
         const location = resolveExportLocationText(playhead.value)
         context.fillStyle = '#ef4444'
-        context.font = `${bar.subSize}px sans-serif`
+        context.font = `${bar.subSize}px "${exportFontFamily}", sans-serif`
         context.textAlign = 'right'
-        context.fillText(`| ${location}`, width - hPad, y + (right.length ? bar.padding : (bar.barHeight - bar.subSize) / 2))
+        const locationY = exportOptions.value.showTime || right.length
+            ? bar.padding
+            : (bar.barHeight - bar.subSize) / 2
+        context.fillText(`| ${location}`, width - hPad, y + locationY)
         context.fillStyle = '#d4d4d8'
-        context.fillText(location, width - hPad, y + (right.length ? bar.padding : (bar.barHeight - bar.subSize) / 2))
+        context.fillText(location, width - hPad, y + locationY)
     }
     if (right.length) {
         context.fillStyle = '#22c55e'
-        context.font = `${bar.subSize}px sans-serif`
+        context.font = `${bar.subSize}px "${exportFontFamily}", sans-serif`
         context.textAlign = 'right'
         context.fillText(right.join('   '), width - hPad, y + bar.barHeight - bar.subSize - bar.padding)
     }
@@ -430,6 +453,7 @@ const exportScreenshot = async () => {
     try {
         const files = window.files
         if (!files) throw new Error(t('toast.desktopOnly'))
+        await ensureExportFont()
         const size = resolveCanvas()
         const canvas = document.createElement('canvas')
         canvas.width = size.width
@@ -496,9 +520,9 @@ const buildComposeSegments = (start: number, duration: number) => {
 }
 const buildComposeLayout = (): ComposeLayout => {
     const size = resolveCanvas(exportOptions.value.videoMaxWidth)
-    const bar = resolveOverlayBarLayout(size.scale)
+    const bar = resolveOverlayBarLayout(size.scale, exportOverlayContent.value)
     const hPad = Math.round(22 * size.scale)
-    return {...size, ...bar, hPad, leftTextX: hPad}
+    return {...bar, ...size, hPad, leftTextX: hPad}
 }
 const buildTimeWindows = (start: number, duration: number) => Array.from(
     {length: Math.ceil(duration)},
@@ -562,6 +586,7 @@ const formatEta = (seconds: number) => seconds > 60
 const runFrameExport = async (start: number, requestedDuration: number, fileName: string) => {
     const frameExport = window.frameExport
     if (!frameExport) throw new Error(t('toast.desktopOnly'))
+    await ensureExportFont()
     const duration = Math.min(60, requestedDuration)
     if (requestedDuration > duration) ElMessage.warning(t('toast.fallbackLimit'))
     const fps = 30
@@ -696,7 +721,7 @@ const exportVideo = async () => {
                         brandText: 'TESLA DASHCAM',
                         timeWindows: exportOptions.value.showTime ? buildTimeWindows(start, duration) : undefined,
                         driveWindows: exportOptions.value.showDriveData
-                            ? buildTelemetryWindows(seiSeries.value, start, duration)
+                            ? buildTelemetryWindows(seiSeries.value, start, duration, locale.value)
                             : undefined,
                     },
                     useHardware: exportOptions.value.hwAccel,
@@ -710,7 +735,13 @@ const exportVideo = async () => {
             if (result?.canceled || cancelRequested) return
             if (result?.ok && result.filePath) {
                 await files.showItemInFolder(result.filePath)
-                ElMessage.success(t('toast.videoSaved'))
+                ElMessage.success(result.encoder && result.width && result.height
+                    ? t('toast.videoSavedDetails', {
+                        encoder: result.encoder,
+                        width: result.width,
+                        height: result.height,
+                    })
+                    : t('toast.videoSaved'))
                 return
             }
             composeError = result?.error || composeError
