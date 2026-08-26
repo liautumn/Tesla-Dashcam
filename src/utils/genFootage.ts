@@ -1,6 +1,6 @@
-import type {CamFootage, CamSegment} from '../types/tesla'
+import type {CamFootage, CamSegment, SEIDataPoint} from '../types/tesla'
 import {probeDurationFromUrl, probeMp4DurationFromFile} from './probeMp4Duration'
-import {parseTeslaVideoName} from './teslaCamera'
+import {parseTeslaVideoName} from '../../shared/teslaCamera'
 
 const mapPool = async <T>(
     items: T[],
@@ -66,6 +66,91 @@ export const genFootage = async (
 
 export const revokeFootage = (footage?: CamFootage) => {
     footage?.urls.forEach(url => URL.revokeObjectURL(url))
+}
+
+type SeiWorkerReply = {id: number; points?: SEIDataPoint[]; error?: string}
+
+const extractWithWorker = (
+    worker: Worker,
+    file: File,
+    startSeconds: number,
+    duration: number,
+    id: number,
+) => new Promise<SEIDataPoint[]>((resolve, reject) => {
+    const timer = window.setTimeout(() => finish(new Error('SEI extraction timed out')), 120_000)
+    const finish = (error?: Error, points: SEIDataPoint[] = []) => {
+        window.clearTimeout(timer)
+        worker.removeEventListener('message', onMessage)
+        worker.removeEventListener('error', onError)
+        if (error) reject(error)
+        else resolve(points)
+    }
+    const onMessage = (event: MessageEvent<SeiWorkerReply>) => {
+        if (event.data.id !== id) return
+        finish(event.data.error ? new Error(event.data.error) : undefined, event.data.points)
+    }
+    const onError = (event: ErrorEvent) => finish(new Error(event.message || 'SEI worker failed'))
+    worker.addEventListener('message', onMessage)
+    worker.addEventListener('error', onError)
+    worker.postMessage({id, file, startSeconds, duration})
+})
+
+export const extractFootageSEI = async (files: File[], footage: CamFootage) => {
+    const frontFiles = new Map<string, File>()
+    for (const file of files) {
+        const parsed = parseTeslaVideoName(file.name)
+        if (parsed?.camera === 'front') frontFiles.set(parsed.segmentName, file)
+    }
+    const jobs = footage.segments
+        .map(segment => ({segment, file: frontFiles.get(segment.name)}))
+        .filter((job): job is {segment: CamSegment; file: File} => Boolean(job.file))
+    if (!jobs.length) return undefined
+
+    const points: SEIDataPoint[] = []
+    let workers: Worker[] = []
+    try {
+        workers = Array.from({length: Math.min(2, jobs.length)}, () =>
+            new Worker(new URL('./seiWorker.ts', import.meta.url), {type: 'module'}),
+        )
+    } catch {
+        workers = []
+    }
+
+    try {
+        if (workers.length) {
+            await Promise.all(workers.map(async (worker, workerIndex) => {
+                for (let index = workerIndex; index < jobs.length; index += workers.length) {
+                    const {file, segment} = jobs[index]
+                    try {
+                        points.push(...await extractWithWorker(
+                            worker,
+                            file,
+                            segment.startSeconds,
+                            segment.duration,
+                            index,
+                        ))
+                    } catch (error) {
+                        console.warn(`SEI extraction failed for ${segment.name}`, error)
+                    }
+                }
+            }))
+        } else {
+            const {convertToDataPoints, extractSEIFromFile} = await import('./parseSEI')
+            await mapPool(jobs, 2, async ({file, segment}) => {
+                try {
+                    const raw = await extractSEIFromFile(file)
+                    points.push(...convertToDataPoints(raw, segment.startSeconds, segment.duration))
+                } catch (error) {
+                    console.warn(`SEI extraction failed for ${segment.name}`, error)
+                }
+            })
+        }
+    } finally {
+        workers.forEach(worker => worker.terminate())
+    }
+
+    points.sort((left, right) => left.offsetSeconds - right.offsetSeconds)
+    return points.length ? points : undefined
 }
 
 export const calcSeekInfo = (footage: CamFootage, seconds: number) => {

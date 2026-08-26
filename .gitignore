@@ -27,3 +27,4 @@ release
 /tsconfig.node.tsbuildinfo
 /.codex
 /squashfs-root/
+/.test-dist/

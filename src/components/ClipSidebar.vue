@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import {computed, onUnmounted, ref, shallowRef, watch} from 'vue'
+import {computed, onUnmounted, ref} from 'vue'
 import {ElButton, ElInput, ElSegmented} from 'element-plus'
 import {Film, FolderOpen, Search} from 'lucide-vue-next'
 import {useI18n} from 'vue-i18n'
 import type {CamClip, ClipType} from '../types/tesla'
 import {clipDateKey, formatClipTime, parseClipTime} from '../utils/clipTime'
+import ClipThumbnail from './ClipThumbnail.vue'
 import 'element-plus/theme-chalk/el-button.css'
 import 'element-plus/theme-chalk/el-input.css'
 import 'element-plus/theme-chalk/el-segmented.css'
@@ -29,7 +30,6 @@ const emit = defineEmits<{
 const {locale, t} = useI18n()
 const filter = ref<FilterType>('all')
 const search = ref('')
-const thumbnailUrls = shallowRef(new Map<string, string>())
 const storedWidth = Number(localStorage.getItem(sidebarWidthKey))
 const sidebarWidth = ref(
     Number.isFinite(storedWidth) && storedWidth >= minSidebarWidth && storedWidth <= maxSidebarWidth
@@ -73,6 +73,16 @@ const groups = computed(() => {
 })
 
 const groupLabel = (date: string) => {
+    const keyFor = (value: Date) => [
+        value.getFullYear(),
+        String(value.getMonth() + 1).padStart(2, '0'),
+        String(value.getDate()).padStart(2, '0'),
+    ].join('-')
+    const today = new Date()
+    const yesterday = new Date(today)
+    yesterday.setDate(today.getDate() - 1)
+    if (date === keyFor(today)) return t('sidebar.today')
+    if (date === keyFor(yesterday)) return t('sidebar.yesterday')
     const parsed = parseClipTime(`${date}_00-00-00`)
     if (!parsed) return date
     return new Intl.DateTimeFormat(locale.value, {
@@ -92,6 +102,14 @@ const clipTypeLabel = (clip: CamClip) => {
 
 const locationLabel = (clip: CamClip) =>
     [clip.event?.city, clip.event?.street].filter(Boolean).join(' ') || t('sidebar.unknownLocation')
+
+const posterFile = (clip: CamClip) =>
+    clip.videos.find(file => file.name.endsWith('-front.mp4')) ?? clip.videos[0]
+
+const posterKey = (clip: CamClip) => {
+    const file = clip.thumb ?? posterFile(clip)
+    return `${clip.id}:${file?.name ?? ''}:${file?.size ?? 0}:${file?.lastModified ?? 0}`
+}
 
 const finishResize = (event?: PointerEvent) => {
     if (!resizing.value) return
@@ -116,21 +134,7 @@ const onResize = (event: PointerEvent) => {
     sidebarWidth.value = Math.min(maxSidebarWidth, Math.max(minSidebarWidth, event.clientX))
 }
 
-watch(
-    () => props.items,
-    items => {
-        thumbnailUrls.value.forEach(url => URL.revokeObjectURL(url))
-        const next = new Map<string, string>()
-        for (const item of items) {
-            if (item.thumb) next.set(item.id, URL.createObjectURL(item.thumb))
-        }
-        thumbnailUrls.value = next
-    },
-    {immediate: true},
-)
-
 onUnmounted(() => {
-    thumbnailUrls.value.forEach(url => URL.revokeObjectURL(url))
     document.body.style.cursor = ''
     document.body.style.userSelect = ''
 })
@@ -169,8 +173,12 @@ onUnmounted(() => {
           @click="emit('select', clip)"
         >
           <div class="clip-item__thumb">
-            <img v-if="thumbnailUrls.get(clip.id)" :src="thumbnailUrls.get(clip.id)" alt="" />
-            <Film v-else :size="22" />
+            <ClipThumbnail
+              :key="posterKey(clip)"
+              :file="clip.thumb"
+              :video-file="posterFile(clip)"
+              :cache-key="posterKey(clip)"
+            />
           </div>
           <div class="clip-item__body">
             <div class="clip-item__headline">

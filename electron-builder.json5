@@ -18,8 +18,6 @@
   ],
   "mac": {
     "icon": "public/icons/mac/icon.icns",
-    "entitlements": "electron/resources/entitlements.mac.plist",
-    "entitlementsInherit": "electron/resources/entitlements.mac.plist",
     "target": [
       "dmg"
     ],
@@ -48,7 +46,7 @@
     "target": [
       "AppImage",
       "deb",
-//      "rpm"
+      "rpm"
     ],
     "artifactName": "${productName}-Linux-${version}.${ext}"
   }

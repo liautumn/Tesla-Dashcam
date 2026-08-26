@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import {computed, onBeforeUnmount, ref, shallowRef, watch} from 'vue'
-import {ElButton} from 'element-plus'
+import {computed, nextTick, onBeforeUnmount, ref, shallowRef, watch} from 'vue'
+import {ElButton, ElMessage} from 'element-plus'
 import {AlertCircle, FolderOpen, LoaderCircle, UploadCloud} from 'lucide-vue-next'
 import {useI18n} from 'vue-i18n'
 import ClipSidebar from '../components/ClipSidebar.vue'
@@ -8,11 +8,15 @@ import VideoViewer from '../components/VideoViewer.vue'
 import {useClipLibrary} from '../composables/useClipLibrary'
 import type {CamFootage} from '../types/tesla'
 import {genFootage, revokeFootage} from '../utils/genFootage'
+import {useSettingsStore} from '../stores/settings'
+import type {TrashClipResult} from '../../shared/types'
 import 'element-plus/theme-chalk/el-button.css'
+import 'element-plus/theme-chalk/el-message.css'
 
 defineOptions({name: 'HomeView'})
 
-const {t} = useI18n()
+const {locale, t} = useI18n()
+const settingsStore = useSettingsStore()
 
 const {
     clips,
@@ -76,6 +80,34 @@ const selectRelative = (offset: number) => {
     if (next) selectedClip.value = next
 }
 
+const deleteClip = async (clip: typeof selectedClip.value): Promise<TrashClipResult | undefined> => {
+    if (!clip) return undefined
+    const api = window.electronAPI
+    if (!api) return {ok: false, code: 'source-paths-unavailable'}
+
+    const index = clips.value.findIndex(item => item.id === clip.id)
+    loadGeneration += 1
+    revokeFootage(footage.value)
+    footage.value = undefined
+    loadingFootage.value = false
+
+    const result = await api.trashClip(clip.videos, clip.name, String(locale.value))
+    if (result.ok) {
+        clips.value = clips.value.filter(item => item.id !== clip.id)
+        selectedClip.value = clips.value[Math.min(Math.max(index, 0), clips.value.length - 1)]
+        ElMessage.success(t('toast.deleted'))
+    } else {
+        selectedClip.value = undefined
+        await nextTick()
+        selectedClip.value = clip
+    }
+    return result
+}
+
+const onClipEnded = () => {
+    if (settingsStore.app.autoAdvance) selectRelative(1)
+}
+
 onBeforeUnmount(() => {
     loadGeneration += 1
     revokeFootage(footage.value)
@@ -99,8 +131,10 @@ onBeforeUnmount(() => {
         v-if="selectedClip && footage"
         :clip="selectedClip"
         :footage="footage"
+        :delete-clip="deleteClip"
         @next="selectRelative(1)"
         @previous="selectRelative(-1)"
+        @ended="onClipEnded"
       />
 
       <div v-else-if="loadingFootage" class="state state--loading">

@@ -39,6 +39,10 @@ export default defineConfig(({command, mode}) => {
                             outDir: 'dist-electron/preload',
                             rolldownOptions: {
                                 external: electronExternals,
+                                output: {
+                                    format: 'es',
+                                    entryFileNames: 'index.mjs',
+                                },
                             },
                         },
                     },

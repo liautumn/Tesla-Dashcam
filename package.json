@@ -16,6 +16,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "node --test tests/*.test.ts",
     "build": "npm run typecheck && vite build && electron-builder",
     "build:test": "npm run typecheck && vite build --mode test && electron-builder",
     "typecheck": "vue-tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json"

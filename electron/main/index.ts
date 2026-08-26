@@ -9,6 +9,7 @@ import path from 'node:path'
 
 import log, {getLogDirectory, getLogFilePath} from './utils/logger'
 import {resolveFFmpegPath} from './utils/ffmpeg'
+import {cancelAllExports, registerIpcHandlers} from './ipc'
 
 if (!app.isPackaged) {
     app.commandLine.appendSwitch('remote-debugging-port', '9229')
@@ -51,11 +52,14 @@ log.info('Main process bootstrapped', {
     logFile: getLogFilePath(),
 })
 
+let ffmpegPath: string | undefined
 try {
-    log.info('FFmpeg is available', {path: resolveFFmpegPath(app.isPackaged)})
+    ffmpegPath = resolveFFmpegPath(app.isPackaged)
+    log.info('FFmpeg is available', {path: ffmpegPath})
 } catch (error) {
-    log.error('FFmpeg is unavailable', error)
+    log.error('FFmpeg is unavailable; media export will be disabled', error)
 }
+registerIpcHandlers(ffmpegPath)
 
 // Windows 10+ 设置 AppUserModelId，保证通知和任务栏正常
 if (process.platform === 'win32') app.setAppUserModelId(app.getName())
@@ -93,8 +97,8 @@ async function createWindow() {
     const window = new BrowserWindow({
         // 窗口标题
         title: 'Tesla Dashcam',
-        width: 1280,
-        height: 800,
+        width: 1440,
+        height: 900,
         minWidth: 960,
         minHeight: 640,
         // 防止启动闪一下
@@ -110,6 +114,7 @@ async function createWindow() {
             preload,
             nodeIntegration: false,    // 禁止 Renderer 直接使用 Node
             contextIsolation: true,    // 开启上下文隔离（推荐）
+            sandbox: false,
         },
     })
     win = window
@@ -148,13 +153,16 @@ async function createWindow() {
 
     window.webContents.setWindowOpenHandler(({url}) => {
         // https 链接用默认浏览器打开
-        if (url.startsWith('https:')) shell.openExternal(url)
+        if (url.startsWith('https:')) void shell.openExternal(url)
         // 阻止 Electron 内部新开窗口
         return {action: 'deny'}
     })
 
-    // 页面跳转拦截（未使用）
-    // win.webContents.on('will-navigate', (event, url) => { })
+    window.webContents.on('will-navigate', (event, url) => {
+        if (url === window.webContents.getURL()) return
+        event.preventDefault()
+        if (url.startsWith('https:')) void shell.openExternal(url)
+    })
 }
 
 // =======================
@@ -175,6 +183,7 @@ app.whenReady()
 app.on('window-all-closed', () => {
     log.info('All windows closed')
     win = null
+    cancelAllExports()
     // macOS：关闭窗口不退出应用
     if (process.platform !== 'darwin') app.quit()
 })

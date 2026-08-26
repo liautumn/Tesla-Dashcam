@@ -50,13 +50,20 @@ export const useClipLibrary = () => {
     const error = ref<ClipLibraryError>()
     const lastFolder = ref(localStorage.getItem(lastFolderKey) ?? '')
     let dragDepth = 0
+    let loadGeneration = 0
 
-    const loadFiles = async (source: FileList | File[], folderName?: string) => {
+    const loadFiles = async (
+        source: FileList | File[],
+        folderName?: string,
+        generation = ++loadGeneration,
+    ) => {
         if (!source.length) return
+        if (generation !== loadGeneration) return
         scanning.value = true
         error.value = undefined
         try {
             const result = await genClips(source)
+            if (generation !== loadGeneration) return
             if (!result.length) {
                 error.value = {kind: 'no-videos'}
                 return
@@ -70,13 +77,17 @@ export const useClipLibrary = () => {
                 localStorage.setItem(lastFolderKey, resolvedName)
             }
         } catch (cause) {
-            error.value = {
-                kind: 'load',
-                message: cause instanceof Error ? cause.message : String(cause),
+            if (generation === loadGeneration) {
+                error.value = {
+                    kind: 'load',
+                    message: cause instanceof Error ? cause.message : String(cause),
+                }
             }
         } finally {
-            scanning.value = false
-            if (inputRef.value) inputRef.value.value = ''
+            if (generation === loadGeneration) {
+                scanning.value = false
+                if (inputRef.value) inputRef.value.value = ''
+            }
         }
     }
 
@@ -105,17 +116,31 @@ export const useClipLibrary = () => {
         event.preventDefault()
         dragDepth = 0
         dragging.value = false
-        const items = Array.from(event.dataTransfer?.items ?? [])
-        for (const item of items) {
-            const entry = item.webkitGetAsEntry?.()
-            if (entry?.isDirectory) {
-                const files = await readDirectoryFiles(entry as FileSystemDirectoryEntry)
-                await loadFiles(files, entry.name)
-                return
+        const generation = ++loadGeneration
+        scanning.value = true
+        error.value = undefined
+        try {
+            const items = Array.from(event.dataTransfer?.items ?? [])
+            for (const item of items) {
+                const entry = item.webkitGetAsEntry?.()
+                if (entry?.isDirectory) {
+                    const files = await readDirectoryFiles(entry as FileSystemDirectoryEntry)
+                    await loadFiles(files, entry.name, generation)
+                    return
+                }
             }
+            const files = event.dataTransfer?.files
+            if (files?.length) await loadFiles(files, undefined, generation)
+        } catch (cause) {
+            if (generation === loadGeneration) {
+                error.value = {
+                    kind: 'load',
+                    message: cause instanceof Error ? cause.message : String(cause),
+                }
+            }
+        } finally {
+            if (generation === loadGeneration) scanning.value = false
         }
-        const files = event.dataTransfer?.files
-        if (files?.length) await loadFiles(files)
     }
 
     onMounted(() => {
@@ -128,6 +153,7 @@ export const useClipLibrary = () => {
     })
 
     onUnmounted(() => {
+        loadGeneration += 1
         window.removeEventListener('dragenter', onDragEnter)
         window.removeEventListener('dragleave', onDragLeave)
         window.removeEventListener('dragover', onDragOver)
