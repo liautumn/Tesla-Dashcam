@@ -103,7 +103,7 @@ async function createWindow() {
         height: 900,
         minWidth: 960,
         minHeight: 640,
-        // 防止启动闪一下
+        // 创建时不立即显示
         show: false,
         // 隐藏原生菜单栏
         autoHideMenuBar: true,

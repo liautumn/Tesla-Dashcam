@@ -28,3 +28,4 @@ release
 /.codex
 /squashfs-root/
 /.test-dist/
+/package-lock.json
