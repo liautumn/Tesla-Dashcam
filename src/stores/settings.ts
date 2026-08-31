@@ -7,6 +7,7 @@ export type AppSettings = {
     autoSeekEvent: boolean
     sentryCameraFocus: boolean
     preferredView: ComposeViewType | null
+    playbackRate: number
 }
 
 export type ExportSettings = {
@@ -40,6 +41,11 @@ const asRecord = (value: unknown): Record<string, unknown> =>
 const storedBoolean = (value: unknown, fallback: boolean) =>
     typeof value === 'boolean' ? value : fallback
 
+const playbackRates = new Set([0.25, 0.5, 1, 1.5, 2, 4, 8, 10])
+
+const storedPlaybackRate = (value: unknown) =>
+    typeof value === 'number' && playbackRates.has(value) ? value : 1
+
 const readStoredValue = (key: string): unknown => {
     try {
         return JSON.parse(localStorage.getItem(key) ?? '{}')
@@ -59,6 +65,7 @@ export const normalizeAppSettings = (value: unknown): AppSettings => {
         autoSeekEvent: storedBoolean(stored.autoSeekEvent, true),
         sentryCameraFocus: storedBoolean(stored.sentryCameraFocus, true),
         preferredView,
+        playbackRate: storedPlaybackRate(stored.playbackRate),
     }
 }
 

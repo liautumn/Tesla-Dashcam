@@ -186,12 +186,13 @@ onBeforeUnmount(() => {
   background: #0b0c0c;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   height: 100%;
   min-height: 0;
 }
 
 .folder-input { display: none; }
-.content { min-height: 0; min-width: 0; position: relative; }
+.content { height: 100%; min-height: 0; min-width: 0; overflow: hidden; position: relative; }
 
 .state {
   align-items: center;

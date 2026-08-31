@@ -333,8 +333,11 @@ test('stored settings reject invalid values and preserve supported legacy layout
         autoSeekEvent: false,
         sentryCameraFocus: true,
         preferredView: null,
+        playbackRate: 1,
     })
     assert.equal(normalizeAppSettings({preferredLayout: 'grid6'}).preferredView, 'grid6')
+    assert.equal(normalizeAppSettings({playbackRate: 10}).playbackRate, 10)
+    assert.equal(normalizeAppSettings({playbackRate: 3}).playbackRate, 1)
     assert.deepEqual(normalizeExportSettings({
         showTime: false,
         showLocation: 'false',
@@ -378,6 +381,29 @@ test('trash validation inventories sidecars and moves the whole clip directory',
         assert.equal(result.ok, true)
         assert.equal(result.trashedCount, 2)
         assert.equal(trashedPath, fs.realpathSync.native(clipDir))
+    } finally {
+        fs.rmSync(root, {recursive: true, force: true})
+    }
+})
+
+test('trash validation accepts a standalone clip directory', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesla-dashcam-standalone-trash-'))
+    const clipName = '2026-08-31_17-27-56'
+    const clipDir = path.join(root, clipName)
+    fs.mkdirSync(clipDir, {recursive: true})
+    const paths = ['front', 'back', 'left_repeater', 'right_repeater', 'left_pillar', 'right_pillar']
+        .map(camera => path.join(clipDir, `${clipName}-${camera}.mp4`))
+    for (const filePath of paths) fs.writeFileSync(filePath, 'video')
+    fs.writeFileSync(path.join(clipDir, 'event.json'), '{}')
+
+    try {
+        const validated = validateTrashFilesPayload({paths, clipName, locale: 'en'})
+        assert.equal(validated.ok, true)
+        if (!validated.ok) return
+        assert.equal(validated.value.kind, 'event')
+        assert.equal(validated.value.files.length, 6)
+        assert.equal(validated.value.otherFileCount, 1)
+        assert.equal(validated.value.directory.path, fs.realpathSync.native(clipDir))
     } finally {
         fs.rmSync(root, {recursive: true, force: true})
     }

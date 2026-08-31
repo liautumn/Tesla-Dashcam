@@ -220,12 +220,6 @@ export function validateTrashFilesPayload(
     if (sourceDirectoryName !== clipName) {
       return failure('Clip name does not match source directory');
     }
-    if (
-      collectionDirectoryName !== 'SavedClips' &&
-      collectionDirectoryName !== 'SentryClips'
-    ) {
-      return failure('Clip directory must be inside SavedClips or SentryClips');
-    }
     kind = 'event';
   }
 

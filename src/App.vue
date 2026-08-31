@@ -42,5 +42,5 @@ const reload = () => window.location.reload()
   overflow: hidden;
 }
 
-.app-main { min-height: 0; }
+.app-main { height: 100%; min-height: 0; }
 </style>

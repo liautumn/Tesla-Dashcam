@@ -74,7 +74,7 @@ const ensureExportFont = () => {
     return exportFontPromise
 }
 
-const rates = [0.25, 0.5, 1, 1.5, 2]
+const rates = [0.25, 0.5, 1, 1.5, 2, 4, 8, 10]
 const videoElements = shallowReactive(new Map<CamName, HTMLVideoElement>())
 const cameraTimes = new Map<CamName, number>()
 const endedCameras = new Set<CamName>()
@@ -83,8 +83,9 @@ const playhead = ref(0)
 const seekSeconds = ref(0)
 const playing = ref(true)
 const muted = ref(true)
-const playbackRate = ref(1)
+const playbackRate = ref(appSettings.value.playbackRate)
 const view = ref<ComposeViewType>('grid4')
+const cameraAspect = ref(16 / 9)
 const exportIn = ref<number>()
 const exportOut = ref<number>()
 const exporting = ref(false)
@@ -145,6 +146,16 @@ const visibleCamera = (camera: CamName) => {
     if (view.value === 'grid4' || view.value === 'grid4old') return !camera.endsWith('_pillar')
     return view.value === camera
 }
+const stageRatio = computed(() => {
+    if (view.value === 'grid6') return cameraAspect.value * 3 / 2
+    if (view.value === 'grid4') return cameraAspect.value
+    if (view.value === 'grid4old') return 16 / 9
+    return cameraAspect.value
+})
+const stageStyle = computed(() => ({
+    '--stage-ratio': String(stageRatio.value),
+    '--stage-ratio-value': String(stageRatio.value),
+}))
 const locationText = computed(() =>
     [props.clip.event?.city, props.clip.event?.street].filter(Boolean).join(' ') || t('viewer.noLocation'),
 )
@@ -265,6 +276,7 @@ const seekBy = (seconds: number) => void applySeek(playhead.value + seconds)
 const onLoadedMetadata = (camera: CamName) => {
     const video = videoElements.get(camera)
     if (!video) return
+    if (video.videoWidth > 0 && video.videoHeight > 0) cameraAspect.value = video.videoWidth / video.videoHeight
     configureVideos()
     seekVideo(video, seekSeconds.value)
     if (playing.value) void video.play().catch(() => undefined)
@@ -873,7 +885,10 @@ const onKeyDown = (event: KeyboardEvent) => {
     }
 }
 
-watch(playbackRate, configureVideos)
+watch(playbackRate, value => {
+    appSettings.value.playbackRate = value
+    configureVideos()
+})
 watch(muted, configureVideos)
 watch(() => props.clip.id, () => void resetForClip(), {immediate: true, flush: 'post'})
 onMounted(() => window.addEventListener('keydown', onKeyDown))
@@ -918,7 +933,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="viewer__stage">
-      <div class="video-grid" :class="`video-grid--${view}`">
+      <div class="video-grid" :class="`video-grid--${view}`" :style="stageStyle">
         <div
           v-for="camera in cameraNames"
           v-show="visibleCamera(camera)"
@@ -1033,8 +1048,8 @@ onBeforeUnmount(() => {
 .viewer__actions { align-items: center; display: flex; gap: 5px; }
 .viewer__actions a, .viewer__actions button { align-items: center; background: #1d2020; border: 1px solid #303333; border-radius: 5px; color: #b7bcbc; cursor: pointer; display: inline-flex; font-size: 11px; gap: 5px; height: 31px; padding: 0 9px; text-decoration: none; }
 .viewer__actions a:hover, .viewer__actions button:hover { background: #292c2c; color: #fff; }
-.viewer__stage { min-height: 0; overflow: hidden; position: relative; }
-.video-grid { display: grid; gap: 1px; height: 100%; min-height: 0; overflow: hidden; }
+.viewer__stage { align-items: flex-start; container-type: size; display: flex; justify-content: center; min-height: 0; overflow: hidden; position: relative; }
+.video-grid { aspect-ratio: var(--stage-ratio, 16 / 9); display: grid; gap: 1px; max-height: 100%; min-height: 0; overflow: hidden; width: min(100%, calc(100cqh * var(--stage-ratio-value, 1.7778))); }
 .video-grid--grid6 { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); }
 .video-grid--grid4 { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); }
 .video-grid--grid4old { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: 3fr 2fr; }
