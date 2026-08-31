@@ -1,6 +1,6 @@
 {
   "name": "tesla-dashcam",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "dist-electron/main/index.js",
   "description": "Tesla dashcam footage viewer and export desktop application.",
   "author": "autumn <16638808906@163.com>",
