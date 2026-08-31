@@ -321,6 +321,8 @@ test('shareInflight shares work and releases the registry', async () => {
 })
 
 test('stored settings reject invalid values and preserve supported legacy layout', () => {
+    assert.equal(normalizeExportSettings({}).showDriveData, true)
+    assert.equal(normalizeExportSettings({showDriveData: false}).showDriveData, false)
     assert.deepEqual(normalizeAppSettings({
         autoAdvance: 'false',
         autoSeekEvent: false,

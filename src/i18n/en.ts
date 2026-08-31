@@ -1,7 +1,6 @@
 const en = {
     app: {
         title: 'Dashcam Viewer',
-        switchLanguage: '切换到中文',
     },
     sidebar: {
         search: 'Search date, location, or reason',

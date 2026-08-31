@@ -14,6 +14,7 @@ import 'element-plus/theme-chalk/el-button.css'
 import 'element-plus/theme-chalk/el-message.css'
 
 defineOptions({name: 'HomeView'})
+const emit = defineEmits<{settings: []}>()
 
 const {locale, t} = useI18n()
 const settingsStore = useSettingsStore()
@@ -124,6 +125,7 @@ onBeforeUnmount(() => {
       :scanning="scanning"
       @open="openFolder"
       @select="selectedClip = $event"
+      @settings="emit('settings')"
     />
 
     <main class="content">

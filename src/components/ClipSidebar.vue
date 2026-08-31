@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {computed, onUnmounted, ref} from 'vue'
 import {ElButton, ElInput, ElSegmented} from 'element-plus'
-import {Film, FolderOpen, Search} from 'lucide-vue-next'
+import {Film, FolderOpen, Search, Settings} from 'lucide-vue-next'
 import {useI18n} from 'vue-i18n'
 import type {CamClip, ClipType} from '../types/tesla'
 import {clipDateKey, formatClipTime, parseClipTime} from '../utils/clipTime'
@@ -25,6 +25,7 @@ const props = defineProps<{
 const emit = defineEmits<{
     select: [clip: CamClip]
     open: []
+    settings: []
 }>()
 
 const {locale, t} = useI18n()
@@ -143,9 +144,19 @@ onUnmounted(() => {
 <template>
   <aside class="sidebar" :style="{width: `${sidebarWidth}px`}">
     <div class="sidebar__tools">
-      <ElInput v-model="search" clearable :placeholder="t('sidebar.search')">
-        <template #prefix><Search :size="16" /></template>
-      </ElInput>
+      <div class="sidebar__search-row">
+        <ElInput v-model="search" clearable :placeholder="t('sidebar.search')">
+          <template #prefix><Search :size="16" /></template>
+        </ElInput>
+        <ElButton
+          class="sidebar__settings"
+          :aria-label="t('settings.title')"
+          :title="t('settings.title')"
+          @click="emit('settings')"
+        >
+          <Settings :size="17" />
+        </ElButton>
+      </div>
       <ElSegmented v-model="filter" class="sidebar__filters" :options="filterOptions" />
       <ElButton class="sidebar__open" :loading="scanning" @click="emit('open')">
         <FolderOpen :size="17" />
@@ -222,6 +233,19 @@ onUnmounted(() => {
   display: grid;
   gap: 10px;
   padding: 14px;
+}
+
+.sidebar__search-row {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) 32px;
+}
+
+.sidebar__settings {
+  height: 32px;
+  margin: 0;
+  padding: 0;
+  width: 32px;
 }
 
 .sidebar__filters {

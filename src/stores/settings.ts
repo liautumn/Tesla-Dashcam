@@ -70,7 +70,7 @@ export const normalizeExportSettings = (value: unknown): ExportSettings => {
     return {
         showTime: storedBoolean(stored.showTime, true),
         showLocation: storedBoolean(stored.showLocation, true),
-        showDriveData: storedBoolean(stored.showDriveData, false),
+        showDriveData: storedBoolean(stored.showDriveData, true),
         hwAccel: storedBoolean(stored.hwAccel, true),
         videoMaxWidth,
     }

@@ -1,7 +1,6 @@
 const zh = {
     app: {
         title: '行车记录仪查看器',
-        switchLanguage: 'Switch to English',
     },
     sidebar: {
         search: '搜索日期、地点、原因',
