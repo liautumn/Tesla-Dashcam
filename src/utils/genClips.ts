@@ -1,5 +1,7 @@
 import type {CamClip, CamClipEvent, ClipType} from '../types/tesla'
-import {isTeslaCameraVideoName} from '../../shared/teslaCamera'
+import {isTeslaCameraVideoName} from '../../shared/teslaCamera.ts'
+
+export const ENCRYPTED_CLIPS_DIRECTORY = 'EncryptedClips'
 
 const manualReasons = new Set([
     'user_interaction_dashcam_icon_tapped',
@@ -42,6 +44,8 @@ export const genClips = async (source: FileList | File[]) => {
     for (const file of Array.from(source)) {
         const relativePath = file.webkitRelativePath || file.name
         const paths = relativePath.split('/').filter(Boolean)
+        if (paths.includes(ENCRYPTED_CLIPS_DIRECTORY)) continue
+
         const parentDir = paths.at(-2)
         if (!parentDir) continue
 

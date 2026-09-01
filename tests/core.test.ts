@@ -21,12 +21,37 @@ import {convertToDataPoints} from '../src/utils/parseSEI.ts'
 import {shareInflight} from '../src/utils/shareInflight.ts'
 import {normalizeAppSettings, normalizeExportSettings} from '../src/stores/settings.ts'
 import {formatTelemetryOverlay} from '../src/utils/telemetry.ts'
+import {genClips} from '../src/utils/genClips.ts'
 
 const graphOf = (prepared: ReturnType<typeof prepareComposeExport>) => {
     const index = prepared.args.indexOf('-filter_complex_script')
     assert.ok(index >= 0)
     return fs.readFileSync(prepared.args[index + 1], 'utf8')
 }
+
+const teslaFile = (relativePath: string) => {
+    const file = new File(['video'], path.basename(relativePath), {type: 'video/mp4'})
+    Object.defineProperty(file, 'webkitRelativePath', {value: relativePath})
+    return file
+}
+
+test('clip discovery excludes every EncryptedClips category', async () => {
+    const recent = '2026-08-31_10-00-00'
+    const saved = '2026-08-31_11-00-00'
+    const sentry = '2026-08-31_12-00-00'
+    const encrypted = '2026-08-31_13-00-00'
+    const clips = await genClips([
+        teslaFile(`TeslaCam/RecentClips/${recent}-front.mp4`),
+        teslaFile(`TeslaCam/SavedClips/${saved}/${saved}-front.mp4`),
+        teslaFile(`TeslaCam/SentryClips/${sentry}/${sentry}-front.mp4`),
+        teslaFile(`TeslaCam/EncryptedClips/RecentClips/${encrypted}-front.mp4`),
+        teslaFile(`TeslaCam/EncryptedClips/SavedClips/${encrypted}/${encrypted}-front.mp4`),
+        teslaFile(`TeslaCam/EncryptedClips/SentryClips/${encrypted}/${encrypted}-front.mp4`),
+    ])
+
+    assert.deepEqual(clips.map(clip => clip.type).sort(), ['recent', 'saved', 'sentry'])
+    assert.ok(clips.every(clip => !clip.id.includes('EncryptedClips')))
+})
 
 test('compose export preserves a missing middle camera segment as black video', () => {
     const request: ComposeExportRequest = {

@@ -1,6 +1,6 @@
 import {onMounted, onUnmounted, ref, shallowRef} from 'vue'
 import type {CamClip} from '../types/tesla'
-import {genClips} from '../utils/genClips'
+import {ENCRYPTED_CLIPS_DIRECTORY, genClips} from '../utils/genClips'
 
 const lastFolderKey = 'tesla-cam-last-folder'
 
@@ -28,6 +28,8 @@ const readDirectoryFiles = async (root: FileSystemDirectoryEntry) => {
         }
 
         if (entry.isDirectory) {
+            if (entry.name === ENCRYPTED_CLIPS_DIRECTORY) return
+
             const reader = (entry as FileSystemDirectoryEntry).createReader()
             while (true) {
                 const entries = await readEntries(reader)
