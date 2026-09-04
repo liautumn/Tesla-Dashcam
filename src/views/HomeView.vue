@@ -88,11 +88,21 @@ const deleteClip = async (clip: typeof selectedClip.value): Promise<TrashClipRes
 
     const index = clips.value.findIndex(item => item.id === clip.id)
     loadGeneration += 1
-    revokeFootage(footage.value)
+    const releasedFootage = footage.value
     footage.value = undefined
     loadingFootage.value = false
+    await nextTick()
+    revokeFootage(releasedFootage)
 
-    const result = await trash.moveClip(clip.videos, clip.name, String(locale.value))
+    let result: TrashClipResult
+    try {
+        result = await trash.moveClip(clip.videos, clip.name, String(locale.value))
+    } catch (cause) {
+        result = {
+            ok: false,
+            error: cause instanceof Error ? cause.message : String(cause),
+        }
+    }
     if (result.ok) {
         clips.value = clips.value.filter(item => item.id !== clip.id)
         selectedClip.value = clips.value[Math.min(Math.max(index, 0), clips.value.length - 1)]

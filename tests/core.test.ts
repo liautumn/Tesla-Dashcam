@@ -6,7 +6,7 @@ import path from 'node:path'
 import test from 'node:test'
 import ffmpegStatic from 'ffmpeg-static'
 import {prepareComposeExport} from '../electron/main/mod/composeExportBuilder.ts'
-import {moveClipDirectoryToSystemTrash} from '../electron/main/mod/trashOperation.ts'
+import {classifyTrashError, getTrashErrorMessage, moveClipDirectoryToSystemTrash} from '../electron/main/mod/trashOperation.ts'
 import {validateTrashFilesPayload} from '../electron/main/mod/trashValidation.ts'
 import {resolveTrashPaths} from '../electron/preload/mod/resolveTrashPaths.ts'
 import type {ComposeExportRequest} from '../shared/types/index.ts'
@@ -382,6 +382,17 @@ test('trash path resolution is all-or-nothing', () => {
     const files = [{name: 'a'}, {name: 'b'}] as File[]
     assert.deepEqual(resolveTrashPaths(files, file => `/tmp/${file.name}`), ['/tmp/a', '/tmp/b'])
     assert.equal(resolveTrashPaths(files, file => file.name === 'a' ? '/tmp/a' : ''), null)
+})
+
+test('trash errors retain system details and map to actionable codes', () => {
+    const busy = Object.assign(new Error('The file is being used by another process'), {code: 'EBUSY'})
+    assert.equal(classifyTrashError(busy), 'trash-file-in-use')
+    assert.equal(getTrashErrorMessage(busy), 'EBUSY: The file is being used by another process')
+    assert.equal(classifyTrashError(Object.assign(new Error('Read-only file system'), {code: 'EROFS'})), 'trash-read-only')
+    assert.equal(classifyTrashError(Object.assign(new Error('Access denied'), {code: 'EACCES'})), 'trash-permission-denied')
+    assert.equal(classifyTrashError(Object.assign(new Error('Operation not supported'), {code: 'ENOTSUP'})), 'trash-unsupported')
+    assert.equal(classifyTrashError(Object.assign(new Error('No such file'), {code: 'ENOENT'})), 'source-missing')
+    assert.equal(classifyTrashError(new Error('Native trash operation failed')), 'trash-unavailable')
 })
 
 test('trash validation inventories sidecars and moves the whole clip directory', async () => {

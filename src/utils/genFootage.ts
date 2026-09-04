@@ -76,12 +76,17 @@ const extractWithWorker = (
     startSeconds: number,
     duration: number,
     id: number,
+    signal?: AbortSignal,
 ) => new Promise<SEIDataPoint[]>((resolve, reject) => {
+    let settled = false
     const timer = window.setTimeout(() => finish(new Error('SEI extraction timed out')), 120_000)
     const finish = (error?: Error, points: SEIDataPoint[] = []) => {
+        if (settled) return
+        settled = true
         window.clearTimeout(timer)
         worker.removeEventListener('message', onMessage)
         worker.removeEventListener('error', onError)
+        signal?.removeEventListener('abort', onAbort)
         if (error) reject(error)
         else resolve(points)
     }
@@ -90,12 +95,23 @@ const extractWithWorker = (
         finish(event.data.error ? new Error(event.data.error) : undefined, event.data.points)
     }
     const onError = (event: ErrorEvent) => finish(new Error(event.message || 'SEI worker failed'))
+    const onAbort = () => finish(new DOMException('SEI extraction aborted', 'AbortError'))
     worker.addEventListener('message', onMessage)
     worker.addEventListener('error', onError)
+    signal?.addEventListener('abort', onAbort, {once: true})
+    if (signal?.aborted) {
+        onAbort()
+        return
+    }
     worker.postMessage({id, file, startSeconds, duration})
 })
 
-export const extractFootageSEI = async (files: File[], footage: CamFootage) => {
+export const extractFootageSEI = async (
+    files: File[],
+    footage: CamFootage,
+    signal?: AbortSignal,
+) => {
+    signal?.throwIfAborted()
     const frontFiles = new Map<string, File>()
     for (const file of files) {
         const parsed = parseTeslaVideoName(file.name)
@@ -120,6 +136,7 @@ export const extractFootageSEI = async (files: File[], footage: CamFootage) => {
         if (workers.length) {
             await Promise.all(workers.map(async (worker, workerIndex) => {
                 for (let index = workerIndex; index < jobs.length; index += workers.length) {
+                    signal?.throwIfAborted()
                     const {file, segment} = jobs[index]
                     try {
                         points.push(...await extractWithWorker(
@@ -128,8 +145,10 @@ export const extractFootageSEI = async (files: File[], footage: CamFootage) => {
                             segment.startSeconds,
                             segment.duration,
                             index,
+                            signal,
                         ))
                     } catch (error) {
+                        if (signal?.aborted) throw error
                         console.warn(`SEI extraction failed for ${segment.name}`, error)
                     }
                 }
@@ -137,10 +156,13 @@ export const extractFootageSEI = async (files: File[], footage: CamFootage) => {
         } else {
             const {convertToDataPoints, extractSEIFromFile} = await import('./parseSEI')
             await mapPool(jobs, 2, async ({file, segment}) => {
+                signal?.throwIfAborted()
                 try {
                     const raw = await extractSEIFromFile(file)
+                    signal?.throwIfAborted()
                     points.push(...convertToDataPoints(raw, segment.startSeconds, segment.duration))
                 } catch (error) {
+                    if (signal?.aborted) throw error
                     console.warn(`SEI extraction failed for ${segment.name}`, error)
                 }
             })

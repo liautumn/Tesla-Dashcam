@@ -1,10 +1,58 @@
 import {BrowserWindow, dialog, ipcMain, shell} from 'electron'
-import type {TrashClipResult} from '../../../shared/types'
+import type {TrashClipResult, TrashResultCode} from '../../../shared/types'
+import {createLogger} from '../utils/logger'
 import {moveClipDirectoryToSystemTrash} from './trashOperation.ts'
 import {validateTrashFilesPayload} from './trashValidation.ts'
 
 let mainWindow: BrowserWindow | null = null
 let registered = false
+const log = createLogger('trash')
+
+const trashFailureCodes = new Set<TrashResultCode>([
+    'source-missing',
+    'trash-file-in-use',
+    'trash-permission-denied',
+    'trash-read-only',
+    'trash-unsupported',
+    'trash-unavailable',
+])
+
+const trashFailureMessage = (code: TrashResultCode | undefined, zh: boolean) => {
+    switch (code) {
+        case 'source-missing':
+            return zh ? '片段已被移动或删除' : 'The clip was moved or deleted'
+        case 'trash-file-in-use':
+            return zh ? '视频文件仍被其他程序占用' : 'The video files are still in use by another app'
+        case 'trash-permission-denied':
+            return zh ? '没有权限修改这个片段' : 'Permission to modify this clip was denied'
+        case 'trash-read-only':
+            return zh ? '存储设备处于只读状态' : 'The storage device is read-only'
+        case 'trash-unsupported':
+            return zh ? '这个存储设备不支持系统废纸篓' : 'This storage device does not support the system Recycle Bin'
+        default:
+            return zh ? '无法将片段移到系统废纸篓' : 'Unable to move the clip to the system Recycle Bin'
+    }
+}
+
+const presentTrashFailure = async (
+    window: BrowserWindow,
+    result: TrashClipResult,
+    sourcePath: string,
+    zh: boolean,
+) => dialog.showMessageBox(window, {
+    type: 'error',
+    title: zh ? '无法移到废纸篓' : 'Unable to Move to Recycle Bin',
+    message: trashFailureMessage(result.code, zh),
+    detail: zh
+        ? `应用没有执行永久删除。\n\n系统错误：${result.error || '未知错误'}\n\n${sourcePath}`
+        : `The app did not permanently delete any files.\n\nSystem error: ${result.error || 'Unknown error'}\n\n${sourcePath}`,
+    buttons: zh
+        ? ['重试', '在文件夹中显示', '关闭']
+        : ['Retry', 'Show in Folder', 'Close'],
+    defaultId: 0,
+    cancelId: 2,
+    noLink: true,
+})
 
 export function registerTrash(window: BrowserWindow) {
     mainWindow = window
@@ -34,6 +82,20 @@ export function registerTrash(window: BrowserWindow) {
             noLink: true,
         })
         if (response.response !== 0) return {ok: false, canceled: true}
-        return moveClipDirectoryToSystemTrash(value, item => shell.trashItem(item))
+
+        while (true) {
+            const result = await moveClipDirectoryToSystemTrash(value, item => shell.trashItem(item))
+            if (result.ok || !result.code || !trashFailureCodes.has(result.code)) return result
+
+            log.warn('Unable to move clip directory to system trash', {
+                path: value.directory.path,
+                code: result.code,
+                error: result.error,
+            })
+            const failure = await presentTrashFailure(mainWindow, result, value.directory.path, zh)
+            if (failure.response === 0) continue
+            if (failure.response === 1) shell.showItemInFolder(value.directory.path)
+            return {...result, failurePresented: true}
+        }
     })
 }

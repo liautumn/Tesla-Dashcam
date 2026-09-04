@@ -110,6 +110,7 @@ let exportStartedAt = 0
 let cancelRequested = false
 let lastDriftCorrection = 0
 let endedEmitted = false
+let seiAbortController: AbortController | undefined
 
 const currentSegment = computed(() => props.footage.segments[currentIndex.value])
 const hasPillarCameras = computed(() => props.footage.segments.some(segment => segment.left_pillar || segment.right_pillar))
@@ -238,6 +239,19 @@ const playVideos = async () => {
     await Promise.allSettled(activeCameras.value.map(camera => videoElements.get(camera)?.play()))
 }
 const pauseVideos = () => videoElements.forEach(video => video.pause())
+const releaseVideoResources = () => {
+    playing.value = false
+    videoElements.forEach(video => {
+        video.pause()
+        video.removeAttribute('src')
+        video.load()
+    })
+}
+const abortSeiLoad = () => {
+    loadSeiGeneration += 1
+    seiAbortController?.abort()
+    seiAbortController = undefined
+}
 const togglePlayback = async () => {
     if (!activeCameras.value.length) return
     if (!playing.value && playhead.value >= props.footage.duration - 0.01) await applySeek(0)
@@ -788,7 +802,7 @@ const requestDelete = async () => {
     deleting.value = true
     try {
         const result = await props.deleteClip(props.clip)
-        if (result && !result.ok && !result.canceled) {
+        if (result && !result.ok && !result.canceled && !result.failurePresented) {
             const message = result.code === 'source-paths-unavailable'
                 ? t('toast.sourcePathsUnavailable')
                 : result.code === 'files-changed'
@@ -804,6 +818,8 @@ const requestDelete = async () => {
 }
 const resetForClip = async () => {
     if (exporting.value) cancelExport()
+    abortSeiLoad()
+    const generation = loadSeiGeneration
     pauseVideos()
     currentIndex.value = 0
     playhead.value = 0
@@ -824,17 +840,21 @@ const resetForClip = async () => {
         ? sentryCamera
         : preferred
     await nextTick()
+    if (generation !== loadSeiGeneration) return
     if (appSettings.value.autoSeekEvent && eventSeconds.value !== undefined) await applySeek(eventSeconds.value)
     else await playVideos()
-    const generation = ++loadSeiGeneration
+    if (generation !== loadSeiGeneration) return
+    const abortController = new AbortController()
+    seiAbortController = abortController
     seiSeries.value = props.footage.seiData ?? []
     seiLoading.value = true
     try {
-        const data = await extractFootageSEI(props.clip.videos, props.footage)
+        const data = await extractFootageSEI(props.clip.videos, props.footage, abortController.signal)
         if (generation === loadSeiGeneration) seiSeries.value = data ?? []
     } catch (error) {
-        console.warn('Unable to read clip telemetry', error)
+        if (!abortController.signal.aborted) console.warn('Unable to read clip telemetry', error)
     } finally {
+        if (seiAbortController === abortController) seiAbortController = undefined
         if (generation === loadSeiGeneration) seiLoading.value = false
     }
 }
@@ -893,9 +913,9 @@ watch(muted, configureVideos)
 watch(() => props.clip.id, () => void resetForClip(), {immediate: true, flush: 'post'})
 onMounted(() => window.addEventListener('keydown', onKeyDown))
 onBeforeUnmount(() => {
-    loadSeiGeneration += 1
+    abortSeiLoad()
     if (exporting.value) cancelExport()
-    pauseVideos()
+    releaseVideoResources()
     window.removeEventListener('keydown', onKeyDown)
 })
 </script>
