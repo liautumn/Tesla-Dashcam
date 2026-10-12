@@ -6,7 +6,7 @@ import path from 'node:path'
 import test from 'node:test'
 import ffmpegStatic from 'ffmpeg-static'
 import {prepareComposeExport} from '../electron/main/mod/composeExportBuilder.ts'
-import {classifyTrashError, getTrashErrorMessage, moveClipDirectoryToSystemTrash} from '../electron/main/mod/trashOperation.ts'
+import {classifyDeleteError, confirmAndDeleteClip, getDeleteConfirmationOptions, getDeleteErrorMessage} from '../electron/main/mod/trashOperation.ts'
 import {validateTrashFilesPayload} from '../electron/main/mod/trashValidation.ts'
 import {resolveTrashPaths} from '../electron/preload/mod/resolveTrashPaths.ts'
 import type {ComposeExportRequest} from '../shared/types/index.ts'
@@ -384,18 +384,18 @@ test('trash path resolution is all-or-nothing', () => {
     assert.equal(resolveTrashPaths(files, file => file.name === 'a' ? '/tmp/a' : ''), null)
 })
 
-test('trash errors retain system details and map to actionable codes', () => {
+test('delete errors retain system details and map to actionable codes', () => {
     const busy = Object.assign(new Error('The file is being used by another process'), {code: 'EBUSY'})
-    assert.equal(classifyTrashError(busy), 'trash-file-in-use')
-    assert.equal(getTrashErrorMessage(busy), 'EBUSY: The file is being used by another process')
-    assert.equal(classifyTrashError(Object.assign(new Error('Read-only file system'), {code: 'EROFS'})), 'trash-read-only')
-    assert.equal(classifyTrashError(Object.assign(new Error('Access denied'), {code: 'EACCES'})), 'trash-permission-denied')
-    assert.equal(classifyTrashError(Object.assign(new Error('Operation not supported'), {code: 'ENOTSUP'})), 'trash-unsupported')
-    assert.equal(classifyTrashError(Object.assign(new Error('No such file'), {code: 'ENOENT'})), 'source-missing')
-    assert.equal(classifyTrashError(new Error('Native trash operation failed')), 'trash-unavailable')
+    assert.equal(classifyDeleteError(busy), 'delete-file-in-use')
+    assert.equal(getDeleteErrorMessage(busy), 'EBUSY: The file is being used by another process')
+    assert.equal(classifyDeleteError(Object.assign(new Error('Read-only file system'), {code: 'EROFS'})), 'delete-read-only')
+    assert.equal(classifyDeleteError(Object.assign(new Error('Access denied'), {code: 'EACCES'})), 'delete-permission-denied')
+    assert.equal(classifyDeleteError(Object.assign(new Error('Operation not supported'), {code: 'ENOTSUP'})), 'delete-unsupported')
+    assert.equal(classifyDeleteError(Object.assign(new Error('No such file'), {code: 'ENOENT'})), 'source-missing')
+    assert.equal(classifyDeleteError(new Error('Delete operation failed')), 'delete-failed')
 })
 
-test('trash validation inventories sidecars and moves the whole clip directory', async () => {
+test('delete validation inventories sidecars and permanently deletes the whole clip directory', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesla-dashcam-trash-'))
     const clipName = '2026-08-21_18-08-31'
     const clipDir = path.join(root, 'TeslaCam', 'SavedClips', clipName)
@@ -412,11 +412,105 @@ test('trash validation inventories sidecars and moves the whole clip directory',
         assert.equal(validated.ok, true)
         if (!validated.ok) return
         assert.equal(validated.value.otherFileCount, 2)
-        let trashedPath = ''
-        const result = await moveClipDirectoryToSystemTrash(validated.value, async value => { trashedPath = value })
+        const result = await confirmAndDeleteClip(validated.value, async options => {
+            assert.equal(options.defaultId, 1)
+            assert.equal(options.cancelId, 1)
+            assert.deepEqual(options.buttons, ['永久删除', '取消'])
+            assert.match(options.detail, /2 个视频和 2 个附属文件/)
+            assert.match(options.detail, /不可恢复/)
+            assert.ok(options.detail.includes(clipDir))
+            return 0
+        })
         assert.equal(result.ok, true)
-        assert.equal(result.trashedCount, 2)
-        assert.equal(trashedPath, fs.realpathSync.native(clipDir))
+        assert.equal(result.deletedCount, 2)
+        assert.equal(fs.existsSync(clipDir), false)
+        assert.equal(fs.existsSync(path.dirname(clipDir)), true)
+    } finally {
+        fs.rmSync(root, {recursive: true, force: true})
+    }
+})
+
+test('canceling permanent deletion leaves all files untouched', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesla-dashcam-delete-cancel-'))
+    const clipName = '2026-08-31_17-27-56'
+    const clipDir = path.join(root, clipName)
+    fs.mkdirSync(clipDir)
+    const front = path.join(clipDir, `${clipName}-front.mp4`)
+    fs.writeFileSync(front, 'video')
+    try {
+        const validated = validateTrashFilesPayload({paths: [front], clipName, locale: 'en'})
+        assert.ok(validated.ok)
+        if (!validated.ok) return
+        let deleteCalls = 0
+        for (const response of [1, -1, 2]) {
+            const result = await confirmAndDeleteClip(validated.value, async options => {
+                assert.deepEqual(options.buttons, ['Permanently Delete', 'Cancel'])
+                assert.match(options.detail, /cannot be undone/)
+                return response
+            }, async () => { deleteCalls += 1 })
+            assert.deepEqual(result, {ok: false, canceled: true})
+        }
+        await assert.rejects(confirmAndDeleteClip(validated.value, async () => {
+            throw new Error('Dialog unavailable')
+        }, async () => { deleteCalls += 1 }), /Dialog unavailable/)
+        assert.equal(deleteCalls, 0)
+        assert.equal(fs.readFileSync(front, 'utf8'), 'video')
+    } finally {
+        fs.rmSync(root, {recursive: true, force: true})
+    }
+})
+
+test('RecentClips confirmation explicitly covers the entire folder', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesla-dashcam-delete-recent-'))
+    const clipName = '2026-08-31_17-27-56'
+    const clipDir = path.join(root, 'TeslaCam', 'RecentClips')
+    fs.mkdirSync(clipDir, {recursive: true})
+    const paths = ['2026-08-31_17-26-56', clipName].map(stamp => path.join(clipDir, `${stamp}-front.mp4`))
+    for (const filePath of paths) fs.writeFileSync(filePath, 'video')
+    try {
+        const validated = validateTrashFilesPayload({paths, clipName, locale: 'zh-CN'})
+        assert.ok(validated.ok)
+        if (!validated.ok) return
+        assert.equal(validated.value.kind, 'recent')
+        const options = getDeleteConfirmationOptions(validated.value)
+        assert.match(options.message, /整个 RecentClips 目录/)
+        assert.match(options.detail, /全部 2 个视频/)
+        const result = await confirmAndDeleteClip(validated.value, async () => 0)
+        assert.equal(result.ok, true)
+        assert.equal(fs.existsSync(clipDir), false)
+        assert.equal(fs.existsSync(path.dirname(clipDir)), true)
+    } finally {
+        fs.rmSync(root, {recursive: true, force: true})
+    }
+})
+
+test('failed permanent deletion reports system errors and requires a fresh file list', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesla-dashcam-delete-fail-'))
+    const clipName = '2026-08-31_17-27-56'
+    const clipDir = path.join(root, clipName)
+    fs.mkdirSync(clipDir)
+    const front = path.join(clipDir, `${clipName}-front.mp4`)
+    const back = path.join(clipDir, `${clipName}-back.mp4`)
+    fs.writeFileSync(front, 'front')
+    fs.writeFileSync(back, 'back')
+    try {
+        const validated = validateTrashFilesPayload({paths: [front, back], clipName, locale: 'en'})
+        assert.ok(validated.ok)
+        if (!validated.ok) return
+        let deleteCalls = 0
+        const result = await confirmAndDeleteClip(validated.value, async () => 0, async directoryPath => {
+            assert.equal(directoryPath, fs.realpathSync.native(clipDir))
+            deleteCalls += 1
+            fs.unlinkSync(front)
+            throw Object.assign(new Error('File is in use'), {code: 'EBUSY'})
+        })
+        assert.equal(result.ok, false)
+        assert.equal(result.code, 'delete-file-in-use')
+        assert.equal(result.refreshRequired, true)
+        assert.match(result.error ?? '', /EBUSY/)
+        assert.equal(deleteCalls, 1)
+        assert.equal(fs.existsSync(front), false)
+        assert.equal(fs.existsSync(back), true)
     } finally {
         fs.rmSync(root, {recursive: true, force: true})
     }
@@ -461,12 +555,16 @@ test('trash operation rejects changed or incomplete clip contents before deletio
         const validated = validateTrashFilesPayload({paths: [front, back], clipName, locale: 'en'})
         assert.equal(validated.ok, true)
         if (!validated.ok) return
-        fs.writeFileSync(path.join(clipDir, 'event.json'), '{}')
-        let trashCalls = 0
-        const result = await moveClipDirectoryToSystemTrash(validated.value, async () => { trashCalls += 1 })
+        let deleteCalls = 0
+        const result = await confirmAndDeleteClip(validated.value, async () => {
+            fs.writeFileSync(path.join(clipDir, 'event.json'), '{}')
+            return 0
+        }, async () => { deleteCalls += 1 })
         assert.equal(result.ok, false)
         assert.equal(result.code, 'files-changed')
-        assert.equal(trashCalls, 0)
+        assert.equal(deleteCalls, 0)
+        assert.equal(fs.existsSync(front), true)
+        assert.equal(fs.existsSync(back), true)
     } finally {
         fs.rmSync(root, {recursive: true, force: true})
     }

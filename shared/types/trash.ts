@@ -2,11 +2,11 @@ export type TrashResultCode =
     | 'files-changed'
     | 'source-paths-unavailable'
     | 'source-missing'
-    | 'trash-file-in-use'
-    | 'trash-permission-denied'
-    | 'trash-read-only'
-    | 'trash-unsupported'
-    | 'trash-unavailable'
+    | 'delete-file-in-use'
+    | 'delete-permission-denied'
+    | 'delete-read-only'
+    | 'delete-unsupported'
+    | 'delete-failed'
 
 export type TrashClipResult = {
     ok: boolean
@@ -14,7 +14,8 @@ export type TrashClipResult = {
     error?: string
     code?: TrashResultCode
     failurePresented?: boolean
-    trashedCount?: number
+    refreshRequired?: boolean
+    deletedCount?: number
 }
 
 export interface TrashMethods {

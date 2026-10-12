@@ -43,7 +43,7 @@ const readDirectoryFiles = async (root: FileSystemDirectoryEntry) => {
     return files
 }
 
-export const useClipLibrary = () => {
+export const useClipLibrary = (canLoad: () => boolean = () => true) => {
     const clips = shallowRef<CamClip[]>([])
     const selectedClip = shallowRef<CamClip>()
     const inputRef = ref<HTMLInputElement>()
@@ -59,7 +59,7 @@ export const useClipLibrary = () => {
         folderName?: string,
         generation = ++loadGeneration,
     ) => {
-        if (!source.length) return
+        if (!canLoad() || !source.length) return
         if (generation !== loadGeneration) return
         scanning.value = true
         error.value = undefined
@@ -94,15 +94,22 @@ export const useClipLibrary = () => {
         }
     }
 
-    const openFolder = () => inputRef.value?.click()
+    const openFolder = () => {
+        if (canLoad()) inputRef.value?.click()
+    }
 
     const onInputChange = (event: Event) => {
         const input = event.target as HTMLInputElement
+        if (!canLoad()) {
+            input.value = ''
+            return
+        }
         if (input.files) void loadFiles(input.files)
     }
 
     const onDragEnter = (event: DragEvent) => {
         event.preventDefault()
+        if (!canLoad()) return
         dragDepth += 1
         if (dragDepth === 1) dragging.value = true
     }
@@ -113,12 +120,13 @@ export const useClipLibrary = () => {
     }
     const onDragOver = (event: DragEvent) => {
         event.preventDefault()
-        if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+        if (event.dataTransfer) event.dataTransfer.dropEffect = canLoad() ? 'copy' : 'none'
     }
     const onDrop = async (event: DragEvent) => {
         event.preventDefault()
         dragDepth = 0
         dragging.value = false
+        if (!canLoad()) return
         const generation = ++loadGeneration
         scanning.value = true
         error.value = undefined

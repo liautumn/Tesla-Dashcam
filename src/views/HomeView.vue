@@ -18,6 +18,7 @@ const emit = defineEmits<{settings: []}>()
 
 const {locale, t} = useI18n()
 const settingsStore = useSettingsStore()
+const deletingClip = ref(false)
 
 const {
     clips,
@@ -29,7 +30,7 @@ const {
     lastFolder,
     openFolder,
     onInputChange,
-} = useClipLibrary()
+} = useClipLibrary(() => !deletingClip.value)
 
 const footage = shallowRef<CamFootage>()
 const loadingFootage = ref(false)
@@ -75,7 +76,7 @@ watch(
 )
 
 const selectRelative = (offset: number) => {
-    if (!selectedClip.value) return
+    if (deletingClip.value || !selectedClip.value) return
     const index = clips.value.findIndex(clip => clip.id === selectedClip.value?.id)
     const next = clips.value[index + offset]
     if (next) selectedClip.value = next
@@ -83,36 +84,48 @@ const selectRelative = (offset: number) => {
 
 const deleteClip = async (clip: typeof selectedClip.value): Promise<TrashClipResult | undefined> => {
     if (!clip) return undefined
+    if (deletingClip.value || scanning.value) return {ok: false, canceled: true}
     const trash = window.trash
     if (!trash) return {ok: false, code: 'source-paths-unavailable'}
 
-    const index = clips.value.findIndex(item => item.id === clip.id)
-    loadGeneration += 1
-    const releasedFootage = footage.value
-    footage.value = undefined
-    loadingFootage.value = false
-    await nextTick()
-    revokeFootage(releasedFootage)
-
-    let result: TrashClipResult
+    deletingClip.value = true
     try {
-        result = await trash.moveClip(clip.videos, clip.name, String(locale.value))
-    } catch (cause) {
-        result = {
-            ok: false,
-            error: cause instanceof Error ? cause.message : String(cause),
-        }
-    }
-    if (result.ok) {
-        clips.value = clips.value.filter(item => item.id !== clip.id)
-        selectedClip.value = clips.value[Math.min(Math.max(index, 0), clips.value.length - 1)]
-        ElMessage.success(t('toast.deleted'))
-    } else {
-        selectedClip.value = undefined
+        const index = clips.value.findIndex(item => item.id === clip.id)
+        loadGeneration += 1
+        const releasedFootage = footage.value
+        footage.value = undefined
+        loadingFootage.value = false
         await nextTick()
-        selectedClip.value = clip
+        revokeFootage(releasedFootage)
+
+        let result: TrashClipResult
+        try {
+            result = await trash.moveClip(clip.videos, clip.name, String(locale.value))
+        } catch (cause) {
+            result = {
+                ok: false,
+                error: cause instanceof Error ? cause.message : String(cause),
+            }
+        }
+        if (result.ok) {
+            clips.value = clips.value.filter(item => item !== clip)
+            selectedClip.value = clips.value[Math.min(Math.max(index, 0), clips.value.length - 1)]
+            ElMessage.success(t('toast.deleted'))
+        } else if (result.refreshRequired) {
+            // Do not load stale File objects after a possibly partial permanent deletion.
+            clips.value = clips.value.filter(item => item !== clip)
+            selectedClip.value = undefined
+            await nextTick()
+            footageError.value = t('toast.deleteRefreshRequired')
+        } else {
+            selectedClip.value = undefined
+            await nextTick()
+            selectedClip.value = clip
+        }
+        return result
+    } finally {
+        deletingClip.value = false
     }
-    return result
 }
 
 const onClipEnded = () => {
@@ -127,14 +140,14 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="workspace">
-    <input ref="inputRef" class="folder-input" type="file" multiple @change="onInputChange" />
+    <input ref="inputRef" class="folder-input" type="file" multiple :disabled="deletingClip" @change="onInputChange" />
 
     <ClipSidebar
       :items="clips"
       :selected="selectedClip"
-      :scanning="scanning"
+      :scanning="scanning || deletingClip"
       @open="openFolder"
-      @select="selectedClip = $event"
+      @select="!deletingClip && (selectedClip = $event)"
       @settings="emit('settings')"
     />
 
@@ -148,6 +161,11 @@ onBeforeUnmount(() => {
         @previous="selectRelative(-1)"
         @ended="onClipEnded"
       />
+
+      <div v-else-if="deletingClip" class="state state--loading">
+        <LoaderCircle class="spin" :size="34" />
+        <strong>{{ t('home.deletingClip') }}</strong>
+      </div>
 
       <div v-else-if="loadingFootage" class="state state--loading">
         <LoaderCircle class="spin" :size="34" />

@@ -1,0 +1,814 @@
+diff --git a/README.md b/README.md
+index b9f5e47..280e4a7 100644
+--- a/README.md
++++ b/README.md
+@@ -18,7 +18,7 @@ Tesla 行车记录仪素材查看与导出工具。应用使用 Electron 和 Vue
+ - 显示速度曲线、事件位置、急刹标记和本地 GPS 行驶轨迹
+ - 导出当前画面、驾驶数据 CSV 和多摄像头合成 MP4
+ - 使用 IN/OUT 标记精确选择导出区间，显示导出进度并支持取消
+-- 将整个片段目录安全移入系统废纸篓，避免遗漏同片段文件
++- 确认后直接永久删除整个片段目录及附属文件，不经过系统废纸篓
+ - 中英文界面，支持自动连播、事件跳转、哨兵摄像头聚焦和导出设置
+ 
+ ## 界面预览
+@@ -145,7 +145,7 @@ npm run build:test
+ - 视频解析、驾驶数据解析、截图、CSV 和 MP4 合成都在本机完成
+ - 应用不会自动上传视频、GPS 或事件信息
+ - 只有主动点击“高德地图”时才会在系统浏览器中打开外部地图链接
+-- 删除操作会先核对完整片段清单，再将片段目录移入系统废纸篓
++- 删除操作会先核对完整片段清单，显示删除范围、目录和不可恢复警告；确认后再次校验并永久删除整个目录（`RecentClips` 会删除整个目录），默认选中取消
+ - 渲染进程关闭 `nodeIntegration` 并启用 `contextIsolation`
+ 
+ ## 技术栈
+diff --git a/electron/main/mod/trash.ts b/electron/main/mod/trash.ts
+index bb3e1ec..887efa4 100644
+--- a/electron/main/mod/trash.ts
++++ b/electron/main/mod/trash.ts
+@@ -1,56 +1,46 @@
+ import {BrowserWindow, dialog, ipcMain, shell} from 'electron'
+ import type {TrashClipResult, TrashResultCode} from '../../../shared/types'
+ import {createLogger} from '../utils/logger'
+-import {moveClipDirectoryToSystemTrash} from './trashOperation.ts'
++import {confirmAndDeleteClip} from './trashOperation.ts'
+ import {validateTrashFilesPayload} from './trashValidation.ts'
+ 
+ let mainWindow: BrowserWindow | null = null
+ let registered = false
+-const log = createLogger('trash')
++let deleting = false
++const log = createLogger('delete')
+ 
+-const trashFailureCodes = new Set<TrashResultCode>([
+-    'source-missing',
+-    'trash-file-in-use',
+-    'trash-permission-denied',
+-    'trash-read-only',
+-    'trash-unsupported',
+-    'trash-unavailable',
+-])
+-
+-const trashFailureMessage = (code: TrashResultCode | undefined, zh: boolean) => {
++const deleteFailureMessage = (code: TrashResultCode | undefined, zh: boolean) => {
+     switch (code) {
+         case 'source-missing':
+             return zh ? '片段已被移动或删除' : 'The clip was moved or deleted'
+-        case 'trash-file-in-use':
++        case 'delete-file-in-use':
+             return zh ? '视频文件仍被其他程序占用' : 'The video files are still in use by another app'
+-        case 'trash-permission-denied':
+-            return zh ? '没有权限修改这个片段' : 'Permission to modify this clip was denied'
+-        case 'trash-read-only':
++        case 'delete-permission-denied':
++            return zh ? '没有权限删除这个片段' : 'Permission to delete this clip was denied'
++        case 'delete-read-only':
+             return zh ? '存储设备处于只读状态' : 'The storage device is read-only'
+-        case 'trash-unsupported':
+-            return zh ? '这个存储设备不支持系统废纸篓' : 'This storage device does not support the system Recycle Bin'
++        case 'delete-unsupported':
++            return zh ? '这个存储设备不支持删除操作' : 'This storage device does not support deletion'
+         default:
+-            return zh ? '无法将片段移到系统废纸篓' : 'Unable to move the clip to the system Recycle Bin'
++            return zh ? '无法完整删除片段' : 'Unable to completely delete the clip'
+     }
+ }
+ 
+-const presentTrashFailure = async (
++const presentDeleteFailure = async (
+     window: BrowserWindow,
+     result: TrashClipResult,
+     sourcePath: string,
+     zh: boolean,
+ ) => dialog.showMessageBox(window, {
+     type: 'error',
+-    title: zh ? '无法移到废纸篓' : 'Unable to Move to Recycle Bin',
+-    message: trashFailureMessage(result.code, zh),
++    title: zh ? '删除失败' : 'Deletion Failed',
++    message: deleteFailureMessage(result.code, zh),
+     detail: zh
+-        ? `应用没有执行永久删除。\n\n系统错误：${result.error || '未知错误'}\n\n${sourcePath}`
+-        : `The app did not permanently delete any files.\n\nSystem error: ${result.error || 'Unknown error'}\n\n${sourcePath}`,
+-    buttons: zh
+-        ? ['重试', '在文件夹中显示', '关闭']
+-        : ['Retry', 'Show in Folder', 'Close'],
+-    defaultId: 0,
+-    cancelId: 2,
++        ? `删除过程未完成，部分文件可能已经永久删除。请重新选择 TeslaCam 文件夹以刷新列表后再试。\n\n系统错误：${result.error || '未知错误'}\n\n${sourcePath}`
++        : `Deletion did not complete; some files may already have been permanently deleted. Choose the TeslaCam folder again to refresh the list before retrying.\n\nSystem error: ${result.error || 'Unknown error'}\n\n${sourcePath}`,
++    buttons: zh ? ['在文件夹中显示', '关闭'] : ['Show in Folder', 'Close'],
++    defaultId: 1,
++    cancelId: 1,
+     noLink: true,
+ })
+ 
+@@ -59,43 +49,40 @@ export function registerTrash(window: BrowserWindow) {
+     if (registered) return
+     registered = true
+ 
++    // Keep the existing bridge/channel name for compatibility; deletion is permanent.
+     ipcMain.handle('trash:move-clip', async (event, payload: unknown): Promise<TrashClipResult> => {
+-        if (event.sender !== mainWindow?.webContents) return {ok: false, error: 'No window'}
+-        const validated = validateTrashFilesPayload(payload)
+-        if (!validated.ok) return {ok: false, error: validated.error}
+-
+-        const value = validated.value
+-        const zh = value.locale === 'zh-CN'
+-        const isRecent = value.kind === 'recent'
+-        const response = await dialog.showMessageBox(mainWindow, {
+-            type: 'warning',
+-            title: zh ? '移到系统废纸篓？' : 'Move to Recycle Bin?',
+-            message: isRecent
+-                ? (zh ? '将整个 RecentClips 目录移到系统废纸篓？' : 'Move the entire RecentClips folder to the Recycle Bin?')
+-                : (zh ? `将片段目录“${value.clipName}”移到系统废纸篓？` : `Move “${value.clipName}” to the Recycle Bin?`),
+-            detail: zh
+-                ? `已验证 ${value.files.length} 个视频和 ${value.otherFileCount} 个附属文件。此操作可从废纸篓恢复。\n\n${value.directory.path}`
+-                : `${value.files.length} videos and ${value.otherFileCount} sidecar files verified. This can be restored from the Recycle Bin.\n\n${value.directory.path}`,
+-            buttons: [zh ? '移到废纸篓' : 'Move to Recycle Bin', zh ? '取消' : 'Cancel'],
+-            defaultId: 1,
+-            cancelId: 1,
+-            noLink: true,
+-        })
+-        if (response.response !== 0) return {ok: false, canceled: true}
++        const window = mainWindow
++        if (!window || event.sender !== window.webContents) return {ok: false, error: 'No window'}
++        if (deleting) return {ok: false, canceled: true}
++        deleting = true
++        try {
++            const validated = validateTrashFilesPayload(payload)
++            if (!validated.ok) return {ok: false, error: validated.error}
+ 
+-        while (true) {
+-            const result = await moveClipDirectoryToSystemTrash(value, item => shell.trashItem(item))
+-            if (result.ok || !result.code || !trashFailureCodes.has(result.code)) return result
++            const value = validated.value
++            const zh = value.locale === 'zh-CN'
++            const result = await confirmAndDeleteClip(value, async options => {
++                const response = await dialog.showMessageBox(window, options)
++                return response.response
++            })
++            if (!result.refreshRequired) return result
+ 
+-            log.warn('Unable to move clip directory to system trash', {
++            log.warn('Unable to permanently delete clip directory', {
+                 path: value.directory.path,
+                 code: result.code,
+                 error: result.error,
+             })
+-            const failure = await presentTrashFailure(mainWindow, result, value.directory.path, zh)
+-            if (failure.response === 0) continue
+-            if (failure.response === 1) shell.showItemInFolder(value.directory.path)
+-            return {...result, failurePresented: true}
++            try {
++                const failure = await presentDeleteFailure(window, result, value.directory.path, zh)
++                if (failure.response === 0) shell.showItemInFolder(value.directory.path)
++                return {...result, failurePresented: true}
++            } catch (error) {
++                // Preserve refreshRequired even if the native error dialog is unavailable.
++                log.warn('Unable to present deletion failure', {error})
++                return result
++            }
++        } finally {
++            deleting = false
+         }
+     })
+ }
+diff --git a/electron/main/mod/trashOperation.ts b/electron/main/mod/trashOperation.ts
+index 9a20098..e975346 100644
+--- a/electron/main/mod/trashOperation.ts
++++ b/electron/main/mod/trashOperation.ts
+@@ -1,22 +1,23 @@
+-import type { TrashClipResult, TrashResultCode } from '../../../shared/types';
++import {rm} from 'node:fs/promises';
++import type {TrashClipResult, TrashResultCode} from '../../../shared/types';
+ import {
+   isSameValidatedTrashPayload,
+   type ValidatedTrashFilesPayload,
+   validateTrashFilesPayload,
+ } from './trashValidation.ts';
+ 
+-type TrashItem = (filePath: string) => Promise<void>;
++type DeleteDirectory = (directoryPath: string) => Promise<void>;
+ 
+ const ERROR_CODES: Partial<Record<string, TrashResultCode>> = {
+-  EACCES: 'trash-permission-denied',
+-  EBUSY: 'trash-file-in-use',
++  EACCES: 'delete-permission-denied',
++  EBUSY: 'delete-file-in-use',
+   ENOENT: 'source-missing',
+-  ENOSYS: 'trash-unsupported',
+-  ENOTSUP: 'trash-unsupported',
+-  EOPNOTSUPP: 'trash-unsupported',
+-  EPERM: 'trash-permission-denied',
+-  EROFS: 'trash-read-only',
+-  ETXTBSY: 'trash-file-in-use',
++  ENOSYS: 'delete-unsupported',
++  ENOTSUP: 'delete-unsupported',
++  EOPNOTSUPP: 'delete-unsupported',
++  EPERM: 'delete-permission-denied',
++  EROFS: 'delete-read-only',
++  ETXTBSY: 'delete-file-in-use',
+ };
+ 
+ const readErrorCode = (error: unknown): string | undefined => {
+@@ -26,7 +27,7 @@ const readErrorCode = (error: unknown): string | undefined => {
+   return typeof error.code === 'string' ? error.code.toUpperCase() : undefined;
+ };
+ 
+-export function getTrashErrorMessage(error: unknown): string {
++export function getDeleteErrorMessage(error: unknown): string {
+   const message = error instanceof Error ? error.message : String(error);
+   const code = readErrorCode(error);
+   return code && !message.toUpperCase().includes(code)
+@@ -34,40 +35,67 @@ export function getTrashErrorMessage(error: unknown): string {
+     : message;
+ }
+ 
+-export function classifyTrashError(error: unknown): TrashResultCode {
++export function classifyDeleteError(error: unknown): TrashResultCode {
+   const code = readErrorCode(error);
+   if (code && ERROR_CODES[code]) return ERROR_CODES[code];
+ 
+-  const message = getTrashErrorMessage(error).toLowerCase();
++  const message = getDeleteErrorMessage(error).toLowerCase();
+   if (/\b(no such file|not found|does not exist)\b/.test(message)) {
+     return 'source-missing';
+   }
+   if (/\b(busy|in use|being used|used by another process|sharing violation)\b/.test(message)) {
+-    return 'trash-file-in-use';
++    return 'delete-file-in-use';
+   }
+   if (/\b(read[ -]only|write[ -]protected)\b/.test(message)) {
+-    return 'trash-read-only';
++    return 'delete-read-only';
+   }
+   if (/\b(permission denied|operation not permitted|access denied)\b/.test(message)) {
+-    return 'trash-permission-denied';
++    return 'delete-permission-denied';
+   }
+   if (/\b(not supported|unsupported|not implemented)\b/.test(message)) {
+-    return 'trash-unsupported';
++    return 'delete-unsupported';
+   }
+-  return 'trash-unavailable';
++  return 'delete-failed';
+ }
+ 
+-/**
+- * Move the approved clip directory to the system Trash as one operation.
+- * Sidecars such as event.json and thumb.png therefore stay with the videos.
+- */
+-export async function moveClipDirectoryToSystemTrash(
++export function getDeleteConfirmationOptions(approved: ValidatedTrashFilesPayload) {
++  const zh = approved.locale === 'zh-CN';
++  const isRecent = approved.kind === 'recent';
++  return {
++    type: 'warning' as const,
++    title: zh ? '永久删除？' : 'Permanently Delete?',
++    message: isRecent
++      ? (zh ? '永久删除整个 RecentClips 目录？' : 'Permanently delete the entire RecentClips folder?')
++      : (zh ? `永久删除片段目录“${approved.clipName}”？` : `Permanently delete the clip folder “${approved.clipName}”?`),
++    detail: zh
++      ? `将删除目录内全部 ${approved.files.length} 个视频和 ${approved.otherFileCount} 个附属文件。直接删除，不经过系统废纸篓，此操作不可恢复。\n\n${approved.directory.path}`
++      : `All ${approved.files.length} videos and ${approved.otherFileCount} sidecar files in this folder will be permanently deleted. This bypasses the Recycle Bin and cannot be undone.\n\n${approved.directory.path}`,
++    buttons: [zh ? '永久删除' : 'Permanently Delete', zh ? '取消' : 'Cancel'],
++    defaultId: 1,
++    cancelId: 1,
++    noLink: true,
++  };
++}
++
++/** Only the explicit destructive-button response authorizes deletion. */
++export async function confirmAndDeleteClip(
++  approved: ValidatedTrashFilesPayload,
++  confirm: (options: ReturnType<typeof getDeleteConfirmationOptions>) => Promise<number>,
++  deleteDirectory?: DeleteDirectory,
++): Promise<TrashClipResult> {
++  const response = await confirm(getDeleteConfirmationOptions(approved));
++  if (response !== 0) return {ok: false, canceled: true};
++  return deleteClipDirectory(approved, deleteDirectory);
++}
++
++/** Revalidate the approved snapshot, then permanently delete the clip and sidecars. */
++async function deleteClipDirectory(
+   approved: ValidatedTrashFilesPayload,
+-  trashItem: TrashItem,
++  deleteDirectory: DeleteDirectory = directoryPath => rm(directoryPath, {recursive: true, force: false}),
+ ): Promise<TrashClipResult> {
+-  const { directory, files, clipName, locale } = approved;
+-  const paths = files.map((file) => file.path);
+-  const current = validateTrashFilesPayload({ paths, clipName, locale });
++  const {directory, files, clipName, locale} = approved;
++  const paths = files.map(file => file.path);
++  const current = validateTrashFilesPayload({paths, clipName, locale});
+ 
+   if (!current.ok || !isSameValidatedTrashPayload(approved, current.value)) {
+     return {
+@@ -78,14 +106,17 @@ export async function moveClipDirectoryToSystemTrash(
+   }
+ 
+   try {
+-    await trashItem(directory.path);
++    await deleteDirectory(directory.path);
+   } catch (error) {
++    // Recursive deletion is not atomic. Never retry an approved snapshot or
++    // reload stale File objects after a possibly partial deletion.
+     return {
+       ok: false,
+-      code: classifyTrashError(error),
+-      error: getTrashErrorMessage(error),
++      code: classifyDeleteError(error),
++      error: getDeleteErrorMessage(error),
++      refreshRequired: true,
+     };
+   }
+ 
+-  return { ok: true, trashedCount: files.length };
++  return {ok: true, deletedCount: files.length};
+ }
+diff --git a/shared/types/trash.ts b/shared/types/trash.ts
+index 1d9d411..2d2f5a1 100644
+--- a/shared/types/trash.ts
++++ b/shared/types/trash.ts
+@@ -2,11 +2,11 @@ export type TrashResultCode =
+     | 'files-changed'
+     | 'source-paths-unavailable'
+     | 'source-missing'
+-    | 'trash-file-in-use'
+-    | 'trash-permission-denied'
+-    | 'trash-read-only'
+-    | 'trash-unsupported'
+-    | 'trash-unavailable'
++    | 'delete-file-in-use'
++    | 'delete-permission-denied'
++    | 'delete-read-only'
++    | 'delete-unsupported'
++    | 'delete-failed'
+ 
+ export type TrashClipResult = {
+     ok: boolean
+@@ -14,7 +14,8 @@ export type TrashClipResult = {
+     error?: string
+     code?: TrashResultCode
+     failurePresented?: boolean
+-    trashedCount?: number
++    refreshRequired?: boolean
++    deletedCount?: number
+ }
+ 
+ export interface TrashMethods {
+diff --git a/src/components/VideoViewer.vue b/src/components/VideoViewer.vue
+index c1775ad..a327486 100644
+--- a/src/components/VideoViewer.vue
++++ b/src/components/VideoViewer.vue
+@@ -807,8 +807,8 @@ const requestDelete = async () => {
+                 ? t('toast.sourcePathsUnavailable')
+                 : result.code === 'files-changed'
+                     ? t('toast.filesChanged')
+-                    : result.code === 'trash-unavailable'
+-                        ? t('toast.trashUnavailable')
++                    : result.refreshRequired
++                        ? t('toast.deleteRefreshRequired')
+                         : result.error || t('toast.deleteFailed')
+             ElMessage.error(message)
+         }
+diff --git a/src/composables/useClipLibrary.ts b/src/composables/useClipLibrary.ts
+index d2b173b..c457c71 100644
+--- a/src/composables/useClipLibrary.ts
++++ b/src/composables/useClipLibrary.ts
+@@ -43,7 +43,7 @@ const readDirectoryFiles = async (root: FileSystemDirectoryEntry) => {
+     return files
+ }
+ 
+-export const useClipLibrary = () => {
++export const useClipLibrary = (canLoad: () => boolean = () => true) => {
+     const clips = shallowRef<CamClip[]>([])
+     const selectedClip = shallowRef<CamClip>()
+     const inputRef = ref<HTMLInputElement>()
+@@ -59,7 +59,7 @@ export const useClipLibrary = () => {
+         folderName?: string,
+         generation = ++loadGeneration,
+     ) => {
+-        if (!source.length) return
++        if (!canLoad() || !source.length) return
+         if (generation !== loadGeneration) return
+         scanning.value = true
+         error.value = undefined
+@@ -94,15 +94,22 @@ export const useClipLibrary = () => {
+         }
+     }
+ 
+-    const openFolder = () => inputRef.value?.click()
++    const openFolder = () => {
++        if (canLoad()) inputRef.value?.click()
++    }
+ 
+     const onInputChange = (event: Event) => {
+         const input = event.target as HTMLInputElement
++        if (!canLoad()) {
++            input.value = ''
++            return
++        }
+         if (input.files) void loadFiles(input.files)
+     }
+ 
+     const onDragEnter = (event: DragEvent) => {
+         event.preventDefault()
++        if (!canLoad()) return
+         dragDepth += 1
+         if (dragDepth === 1) dragging.value = true
+     }
+@@ -113,12 +120,13 @@ export const useClipLibrary = () => {
+     }
+     const onDragOver = (event: DragEvent) => {
+         event.preventDefault()
+-        if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
++        if (event.dataTransfer) event.dataTransfer.dropEffect = canLoad() ? 'copy' : 'none'
+     }
+     const onDrop = async (event: DragEvent) => {
+         event.preventDefault()
+         dragDepth = 0
+         dragging.value = false
++        if (!canLoad()) return
+         const generation = ++loadGeneration
+         scanning.value = true
+         error.value = undefined
+diff --git a/src/i18n/en.ts b/src/i18n/en.ts
+index f40c62c..95f411e 100644
+--- a/src/i18n/en.ts
++++ b/src/i18n/en.ts
+@@ -24,6 +24,7 @@ const en = {
+     },
+     home: {
+         loadingTimeline: 'Reading video timeline',
++        deletingClip: 'Processing deletion request',
+         loadFailed: 'Unable to load TeslaCam',
+         retry: 'Choose Again',
+         selectClip: 'Select a clip',
+@@ -52,7 +53,7 @@ const en = {
+         exportClip: 'Export Clip',
+         clearInOut: 'Clear export range',
+         jumpToEvent: 'Jump to event',
+-        deleteClip: 'Move to Recycle Bin',
++        deleteClip: 'Permanently Delete Clip',
+         event: 'Event time',
+         hardBraking: 'Hard braking detected',
+         telemetryLoading: 'Reading driving data',
+@@ -125,13 +126,13 @@ const en = {
+         noContent: 'There is no video content to export',
+         sourcePathsUnavailable: 'Source paths are unavailable; choose the folder again in the desktop app',
+         filesChanged: 'Clip files changed; choose the TeslaCam folder again',
+-        trashUnavailable: 'The system Recycle Bin is unavailable; no files were deleted',
++        deleteRefreshRequired: 'Deletion did not complete; some files may have been deleted. Choose the TeslaCam folder again',
+         videoSaved: 'Video clip saved',
+         videoSavedDetails: 'Video clip saved ({encoder}, {width} × {height})',
+         exportError: 'Video export failed: {error}',
+         fallbackLimit: 'Compatibility export is limited to 60 seconds per export',
+-        deleteFailed: 'Unable to move the clip to the Recycle Bin',
+-        deleted: 'Clip moved to the system Recycle Bin',
++        deleteFailed: 'Unable to delete the clip',
++        deleted: 'Clip permanently deleted',
+     },
+     error: {
+         title: 'The page encountered an error',
+diff --git a/src/i18n/zh.ts b/src/i18n/zh.ts
+index 49c1f4c..b866d9d 100644
+--- a/src/i18n/zh.ts
++++ b/src/i18n/zh.ts
+@@ -24,6 +24,7 @@ const zh = {
+     },
+     home: {
+         loadingTimeline: '正在读取视频时间线',
++        deletingClip: '正在处理删除请求',
+         loadFailed: '无法载入 TeslaCam',
+         retry: '重新选择',
+         selectClip: '请选择一个片段',
+@@ -52,7 +53,7 @@ const zh = {
+         exportClip: '导出片段',
+         clearInOut: '清除导出范围',
+         jumpToEvent: '跳到事件',
+-        deleteClip: '移到系统废纸篓',
++        deleteClip: '永久删除片段',
+         event: '事件时间',
+         hardBraking: '检测到急刹',
+         telemetryLoading: '正在读取驾驶数据',
+@@ -125,13 +126,13 @@ const zh = {
+         noContent: '没有可导出的视频内容',
+         sourcePathsUnavailable: '无法读取源文件路径，请在桌面应用中重新选择目录',
+         filesChanged: '片段文件已发生变化，请重新选择 TeslaCam 文件夹',
+-        trashUnavailable: '系统废纸篓当前不可用，未删除任何文件',
++        deleteRefreshRequired: '删除未完成，部分文件可能已删除，请重新选择 TeslaCam 文件夹',
+         videoSaved: '视频片段已保存',
+         videoSavedDetails: '视频片段已保存（{encoder}，{width} × {height}）',
+         exportError: '视频导出失败：{error}',
+         fallbackLimit: '已切换到兼容导出，单次最多导出 60 秒',
+-        deleteFailed: '无法将片段移到废纸篓',
+-        deleted: '片段已移到系统废纸篓',
++        deleteFailed: '删除片段失败',
++        deleted: '片段已永久删除',
+     },
+     error: {
+         title: '页面发生错误',
+diff --git a/src/views/HomeView.vue b/src/views/HomeView.vue
+index 81938f7..8230688 100644
+--- a/src/views/HomeView.vue
++++ b/src/views/HomeView.vue
+@@ -18,6 +18,7 @@ const emit = defineEmits<{settings: []}>()
+ 
+ const {locale, t} = useI18n()
+ const settingsStore = useSettingsStore()
++const deletingClip = ref(false)
+ 
+ const {
+     clips,
+@@ -29,7 +30,7 @@ const {
+     lastFolder,
+     openFolder,
+     onInputChange,
+-} = useClipLibrary()
++} = useClipLibrary(() => !deletingClip.value)
+ 
+ const footage = shallowRef<CamFootage>()
+ const loadingFootage = ref(false)
+@@ -75,7 +76,7 @@ watch(
+ )
+ 
+ const selectRelative = (offset: number) => {
+-    if (!selectedClip.value) return
++    if (deletingClip.value || !selectedClip.value) return
+     const index = clips.value.findIndex(clip => clip.id === selectedClip.value?.id)
+     const next = clips.value[index + offset]
+     if (next) selectedClip.value = next
+@@ -83,36 +84,48 @@ const selectRelative = (offset: number) => {
+ 
+ const deleteClip = async (clip: typeof selectedClip.value): Promise<TrashClipResult | undefined> => {
+     if (!clip) return undefined
++    if (deletingClip.value || scanning.value) return {ok: false, canceled: true}
+     const trash = window.trash
+     if (!trash) return {ok: false, code: 'source-paths-unavailable'}
+ 
+-    const index = clips.value.findIndex(item => item.id === clip.id)
+-    loadGeneration += 1
+-    const releasedFootage = footage.value
+-    footage.value = undefined
+-    loadingFootage.value = false
+-    await nextTick()
+-    revokeFootage(releasedFootage)
+-
+-    let result: TrashClipResult
++    deletingClip.value = true
+     try {
+-        result = await trash.moveClip(clip.videos, clip.name, String(locale.value))
+-    } catch (cause) {
+-        result = {
+-            ok: false,
+-            error: cause instanceof Error ? cause.message : String(cause),
+-        }
+-    }
+-    if (result.ok) {
+-        clips.value = clips.value.filter(item => item.id !== clip.id)
+-        selectedClip.value = clips.value[Math.min(Math.max(index, 0), clips.value.length - 1)]
+-        ElMessage.success(t('toast.deleted'))
+-    } else {
+-        selectedClip.value = undefined
++        const index = clips.value.findIndex(item => item.id === clip.id)
++        loadGeneration += 1
++        const releasedFootage = footage.value
++        footage.value = undefined
++        loadingFootage.value = false
+         await nextTick()
+-        selectedClip.value = clip
++        revokeFootage(releasedFootage)
++
++        let result: TrashClipResult
++        try {
++            result = await trash.moveClip(clip.videos, clip.name, String(locale.value))
++        } catch (cause) {
++            result = {
++                ok: false,
++                error: cause instanceof Error ? cause.message : String(cause),
++            }
++        }
++        if (result.ok) {
++            clips.value = clips.value.filter(item => item !== clip)
++            selectedClip.value = clips.value[Math.min(Math.max(index, 0), clips.value.length - 1)]
++            ElMessage.success(t('toast.deleted'))
++        } else if (result.refreshRequired) {
++            // Do not load stale File objects after a possibly partial permanent deletion.
++            clips.value = clips.value.filter(item => item !== clip)
++            selectedClip.value = undefined
++            await nextTick()
++            footageError.value = t('toast.deleteRefreshRequired')
++        } else {
++            selectedClip.value = undefined
++            await nextTick()
++            selectedClip.value = clip
++        }
++        return result
++    } finally {
++        deletingClip.value = false
+     }
+-    return result
+ }
+ 
+ const onClipEnded = () => {
+@@ -127,14 +140,14 @@ onBeforeUnmount(() => {
+ 
+ <template>
+   <div class="workspace">
+-    <input ref="inputRef" class="folder-input" type="file" multiple @change="onInputChange" />
++    <input ref="inputRef" class="folder-input" type="file" multiple :disabled="deletingClip" @change="onInputChange" />
+ 
+     <ClipSidebar
+       :items="clips"
+       :selected="selectedClip"
+-      :scanning="scanning"
++      :scanning="scanning || deletingClip"
+       @open="openFolder"
+-      @select="selectedClip = $event"
++      @select="!deletingClip && (selectedClip = $event)"
+       @settings="emit('settings')"
+     />
+ 
+@@ -149,6 +162,11 @@ onBeforeUnmount(() => {
+         @ended="onClipEnded"
+       />
+ 
++      <div v-else-if="deletingClip" class="state state--loading">
++        <LoaderCircle class="spin" :size="34" />
++        <strong>{{ t('home.deletingClip') }}</strong>
++      </div>
++
+       <div v-else-if="loadingFootage" class="state state--loading">
+         <LoaderCircle class="spin" :size="34" />
+         <strong>{{ t('home.loadingTimeline') }}</strong>
+diff --git a/tests/core.test.ts b/tests/core.test.ts
+index 7a54404..07fdc3e 100644
+--- a/tests/core.test.ts
++++ b/tests/core.test.ts
+@@ -6,7 +6,7 @@ import path from 'node:path'
+ import test from 'node:test'
+ import ffmpegStatic from 'ffmpeg-static'
+ import {prepareComposeExport} from '../electron/main/mod/composeExportBuilder.ts'
+-import {classifyTrashError, getTrashErrorMessage, moveClipDirectoryToSystemTrash} from '../electron/main/mod/trashOperation.ts'
++import {classifyDeleteError, confirmAndDeleteClip, getDeleteConfirmationOptions, getDeleteErrorMessage} from '../electron/main/mod/trashOperation.ts'
+ import {validateTrashFilesPayload} from '../electron/main/mod/trashValidation.ts'
+ import {resolveTrashPaths} from '../electron/preload/mod/resolveTrashPaths.ts'
+ import type {ComposeExportRequest} from '../shared/types/index.ts'
+@@ -384,18 +384,18 @@ test('trash path resolution is all-or-nothing', () => {
+     assert.equal(resolveTrashPaths(files, file => file.name === 'a' ? '/tmp/a' : ''), null)
+ })
+ 
+-test('trash errors retain system details and map to actionable codes', () => {
++test('delete errors retain system details and map to actionable codes', () => {
+     const busy = Object.assign(new Error('The file is being used by another process'), {code: 'EBUSY'})
+-    assert.equal(classifyTrashError(busy), 'trash-file-in-use')
+-    assert.equal(getTrashErrorMessage(busy), 'EBUSY: The file is being used by another process')
+-    assert.equal(classifyTrashError(Object.assign(new Error('Read-only file system'), {code: 'EROFS'})), 'trash-read-only')
+-    assert.equal(classifyTrashError(Object.assign(new Error('Access denied'), {code: 'EACCES'})), 'trash-permission-denied')
+-    assert.equal(classifyTrashError(Object.assign(new Error('Operation not supported'), {code: 'ENOTSUP'})), 'trash-unsupported')
+-    assert.equal(classifyTrashError(Object.assign(new Error('No such file'), {code: 'ENOENT'})), 'source-missing')
+-    assert.equal(classifyTrashError(new Error('Native trash operation failed')), 'trash-unavailable')
++    assert.equal(classifyDeleteError(busy), 'delete-file-in-use')
++    assert.equal(getDeleteErrorMessage(busy), 'EBUSY: The file is being used by another process')
++    assert.equal(classifyDeleteError(Object.assign(new Error('Read-only file system'), {code: 'EROFS'})), 'delete-read-only')
++    assert.equal(classifyDeleteError(Object.assign(new Error('Access denied'), {code: 'EACCES'})), 'delete-permission-denied')
++    assert.equal(classifyDeleteError(Object.assign(new Error('Operation not supported'), {code: 'ENOTSUP'})), 'delete-unsupported')
++    assert.equal(classifyDeleteError(Object.assign(new Error('No such file'), {code: 'ENOENT'})), 'source-missing')
++    assert.equal(classifyDeleteError(new Error('Delete operation failed')), 'delete-failed')
+ })
+ 
+-test('trash validation inventories sidecars and moves the whole clip directory', async () => {
++test('delete validation inventories sidecars and permanently deletes the whole clip directory', async () => {
+     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesla-dashcam-trash-'))
+     const clipName = '2026-08-21_18-08-31'
+     const clipDir = path.join(root, 'TeslaCam', 'SavedClips', clipName)
+@@ -412,11 +412,105 @@ test('trash validation inventories sidecars and moves the whole clip directory',
+         assert.equal(validated.ok, true)
+         if (!validated.ok) return
+         assert.equal(validated.value.otherFileCount, 2)
+-        let trashedPath = ''
+-        const result = await moveClipDirectoryToSystemTrash(validated.value, async value => { trashedPath = value })
++        const result = await confirmAndDeleteClip(validated.value, async options => {
++            assert.equal(options.defaultId, 1)
++            assert.equal(options.cancelId, 1)
++            assert.deepEqual(options.buttons, ['永久删除', '取消'])
++            assert.match(options.detail, /2 个视频和 2 个附属文件/)
++            assert.match(options.detail, /不可恢复/)
++            assert.ok(options.detail.includes(clipDir))
++            return 0
++        })
+         assert.equal(result.ok, true)
+-        assert.equal(result.trashedCount, 2)
+-        assert.equal(trashedPath, fs.realpathSync.native(clipDir))
++        assert.equal(result.deletedCount, 2)
++        assert.equal(fs.existsSync(clipDir), false)
++        assert.equal(fs.existsSync(path.dirname(clipDir)), true)
++    } finally {
++        fs.rmSync(root, {recursive: true, force: true})
++    }
++})
++
++test('canceling permanent deletion leaves all files untouched', async () => {
++    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesla-dashcam-delete-cancel-'))
++    const clipName = '2026-08-31_17-27-56'
++    const clipDir = path.join(root, clipName)
++    fs.mkdirSync(clipDir)
++    const front = path.join(clipDir, `${clipName}-front.mp4`)
++    fs.writeFileSync(front, 'video')
++    try {
++        const validated = validateTrashFilesPayload({paths: [front], clipName, locale: 'en'})
++        assert.ok(validated.ok)
++        if (!validated.ok) return
++        let deleteCalls = 0
++        for (const response of [1, -1, 2]) {
++            const result = await confirmAndDeleteClip(validated.value, async options => {
++                assert.deepEqual(options.buttons, ['Permanently Delete', 'Cancel'])
++                assert.match(options.detail, /cannot be undone/)
++                return response
++            }, async () => { deleteCalls += 1 })
++            assert.deepEqual(result, {ok: false, canceled: true})
++        }
++        await assert.rejects(confirmAndDeleteClip(validated.value, async () => {
++            throw new Error('Dialog unavailable')
++        }, async () => { deleteCalls += 1 }), /Dialog unavailable/)
++        assert.equal(deleteCalls, 0)
++        assert.equal(fs.readFileSync(front, 'utf8'), 'video')
++    } finally {
++        fs.rmSync(root, {recursive: true, force: true})
++    }
++})
++
++test('RecentClips confirmation explicitly covers the entire folder', async () => {
++    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesla-dashcam-delete-recent-'))
++    const clipName = '2026-08-31_17-27-56'
++    const clipDir = path.join(root, 'TeslaCam', 'RecentClips')
++    fs.mkdirSync(clipDir, {recursive: true})
++    const paths = ['2026-08-31_17-26-56', clipName].map(stamp => path.join(clipDir, `${stamp}-front.mp4`))
++    for (const filePath of paths) fs.writeFileSync(filePath, 'video')
++    try {
++        const validated = validateTrashFilesPayload({paths, clipName, locale: 'zh-CN'})
++        assert.ok(validated.ok)
++        if (!validated.ok) return
++        assert.equal(validated.value.kind, 'recent')
++        const options = getDeleteConfirmationOptions(validated.value)
++        assert.match(options.message, /整个 RecentClips 目录/)
++        assert.match(options.detail, /全部 2 个视频/)
++        const result = await confirmAndDeleteClip(validated.value, async () => 0)
++        assert.equal(result.ok, true)
++        assert.equal(fs.existsSync(clipDir), false)
++        assert.equal(fs.existsSync(path.dirname(clipDir)), true)
++    } finally {
++        fs.rmSync(root, {recursive: true, force: true})
++    }
++})
++
++test('failed permanent deletion reports system errors and requires a fresh file list', async () => {
++    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tesla-dashcam-delete-fail-'))
++    const clipName = '2026-08-31_17-27-56'
++    const clipDir = path.join(root, clipName)
++    fs.mkdirSync(clipDir)
++    const front = path.join(clipDir, `${clipName}-front.mp4`)
++    const back = path.join(clipDir, `${clipName}-back.mp4`)
++    fs.writeFileSync(front, 'front')
++    fs.writeFileSync(back, 'back')
++    try {
++        const validated = validateTrashFilesPayload({paths: [front, back], clipName, locale: 'en'})
++        assert.ok(validated.ok)
++        if (!validated.ok) return
++        let deleteCalls = 0
++        const result = await confirmAndDeleteClip(validated.value, async () => 0, async directoryPath => {
++            assert.equal(directoryPath, fs.realpathSync.native(clipDir))
++            deleteCalls += 1
++            fs.unlinkSync(front)
++            throw Object.assign(new Error('File is in use'), {code: 'EBUSY'})
++        })
++        assert.equal(result.ok, false)
++        assert.equal(result.code, 'delete-file-in-use')
++        assert.equal(result.refreshRequired, true)
++        assert.match(result.error ?? '', /EBUSY/)
++        assert.equal(deleteCalls, 1)
++        assert.equal(fs.existsSync(front), false)
++        assert.equal(fs.existsSync(back), true)
+     } finally {
+         fs.rmSync(root, {recursive: true, force: true})
+     }
+@@ -461,12 +555,16 @@ test('trash operation rejects changed or incomplete clip contents before deletio
+         const validated = validateTrashFilesPayload({paths: [front, back], clipName, locale: 'en'})
+         assert.equal(validated.ok, true)
+         if (!validated.ok) return
+-        fs.writeFileSync(path.join(clipDir, 'event.json'), '{}')
+-        let trashCalls = 0
+-        const result = await moveClipDirectoryToSystemTrash(validated.value, async () => { trashCalls += 1 })
++        let deleteCalls = 0
++        const result = await confirmAndDeleteClip(validated.value, async () => {
++            fs.writeFileSync(path.join(clipDir, 'event.json'), '{}')
++            return 0
++        }, async () => { deleteCalls += 1 })
+         assert.equal(result.ok, false)
+         assert.equal(result.code, 'files-changed')
+-        assert.equal(trashCalls, 0)
++        assert.equal(deleteCalls, 0)
++        assert.equal(fs.existsSync(front), true)
++        assert.equal(fs.existsSync(back), true)
+     } finally {
+         fs.rmSync(root, {recursive: true, force: true})
+     }

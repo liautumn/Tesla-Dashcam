@@ -807,8 +807,8 @@ const requestDelete = async () => {
                 ? t('toast.sourcePathsUnavailable')
                 : result.code === 'files-changed'
                     ? t('toast.filesChanged')
-                    : result.code === 'trash-unavailable'
-                        ? t('toast.trashUnavailable')
+                    : result.refreshRequired
+                        ? t('toast.deleteRefreshRequired')
                         : result.error || t('toast.deleteFailed')
             ElMessage.error(message)
         }
